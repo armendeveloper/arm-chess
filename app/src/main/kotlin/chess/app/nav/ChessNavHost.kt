@@ -9,7 +9,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import chess.app.ui.about.AboutScreen
 import chess.app.ui.about.LicencesScreen
-import chess.app.ui.game.GameScreen
+import chess.app.ui.game.GameRoute
 import chess.app.ui.home.HomeScreen
 import chess.app.ui.stats.StatsScreen
 
@@ -32,14 +32,15 @@ fun ChessNavHost(
     ) {
         composable<Route.Home> {
             HomeScreen(
-                // Placeholder until T-18: New game opens the New game sheet (S2), whose Play goes to Game.
+                // Temporary direct start until T-18: New game opens the New game sheet (S2), whose Play
+                // goes to Game. For now Game starts an in-memory game as White at level 2 (T-15).
                 onNewGame = dropUnlessResumed { navController.navigate(Route.Game) },
                 onStats = dropUnlessResumed { navController.navigate(Route.Stats) },
                 onAbout = dropUnlessResumed { navController.navigate(Route.About) },
             )
         }
         composable<Route.Game> {
-            GameScreen(onHome = dropUnlessResumed { navController.popBackStack() })
+            GameRoute(onHome = dropUnlessResumed { navController.popBackStack() })
         }
         composable<Route.Stats> {
             StatsScreen(onBack = dropUnlessResumed { navController.popBackStack() })

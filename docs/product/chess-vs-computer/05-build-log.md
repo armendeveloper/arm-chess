@@ -796,3 +796,200 @@ Red: with the tests written and no implementation, `:engine:compileTestKotlin` f
 ### Follow-ups
 - T-22: show `Game.sanList()` in the move list. Build the SAN speech (`SanSpeech.kt`) from `Move` and `Position` data (piece, capture, check), not by reading the SAN string aloud.
 - T-29: decide whether the move list uses localized letters. If it does, pass a `SanLetters` built from string resources to `Game.sanList` / `San.format`.
+
+## 2026-10-14 — T-15: Vertical slice: play a legal game against a random-move computer (first demo)
+
+**Stories:** US-3 (tap to move), US-4 (legality, castling, en passant; promotion auto-queens for now), US-6 (off the main thread, 400 ms minimum, board locked), US-5 (status only). Design 02 §4.3.3, §4.3.4 and the US-3/US-6 flows; tech design §6.3–§6.5 and §8.2.
+
+### What changed and why
+- **Computer seam** (`ai/AiPlayer.kt`, `ai/RandomMoveAiPlayer.kt`).
+  - `AiPlayer.chooseMove(game, level): Move` is the interface `EngineAiPlayer` will implement in T-19.
+  - `RandomMoveAiPlayer` is marked TEMPORARY (deleted in T-19). It picks a uniformly random legal move inside `withContext(dispatcher)`, so the work never runs on the caller's thread. It refuses a finished game with `IllegalStateException`.
+- **`AppContainer`** gains `timeSource = TimeSource.Monotonic` and `newAiPlayer()`, which builds `RandomMoveAiPlayer(dispatchers.default, Random.Default)`. In T-19 only the body of `newAiPlayer()` changes.
+- **UI state** (`ui/game/GameUiState.kt`, tech design §6.3): `GameUiState(level, player, board, status)`.
+  - `StatusUi` is structured, not text: `YourMove`, `Check`, `Thinking(check)`, `NoLegalMoves` (the 2.5 s hint), `EngineError` and `GameOver(GameEnd)`.
+  - `GameEnd` covers mate (win or loss) and the four draws.
+  - The ViewModel holds no strings; the status row looks the words up.
+- **`GameAction`**: `SquareTap(square)` and `RetryEngine`. Touch and TalkBack clicks use the same `SquareTap` path.
+- **`GameUiMapper`** is pure and is the only engine → UI conversion.
+  - `board(game, player, selected)`:
+    - pieces from `Position.pieceAt`
+    - the last move from the last ply
+    - the checked king's square
+    - `interactive` only on the player's turn in an ongoing game
+  - `targets(moves)`, in this order:
+    - castling → `Castling` on the king's destination (the engine encodes castling as the king's move)
+    - en passant → `EnPassant` on the empty landing square (a ring)
+    - promotion with or without a capture → `CapturePromotion` or `Promotion`; the four promotion moves collapse into one target
+    - then `Capture` or `Move`
+  - `status(game, player, hint, engineError)`:
+    - a finished game wins over everything
+    - the computer's turn is `Thinking(check)` or `EngineError`
+    - the player's turn is the hint, `Check` or `YourMove`
+- **`GameViewModel`** (tech design §6.5):
+  - It holds the engine `Game` privately, with `selected`, `hint`, `engineError`, `generation`, `aiJob` and `hintJob`. Every change republishes `uiState` through the mapper.
+  - **Tap rules** (design §4.3.3). A tap is ignored unless it is the player's turn in an ongoing game. Otherwise:
+    - a target plays the move
+    - the selected piece deselects
+    - another own piece with legal moves takes the selection
+    - an own piece with no legal moves clears the selection and shows the hint for 2.5 s; a new tap ends the hint and a repeat restarts it
+    - anything else deselects silently
+  - **Promotion:** `choosePromotion` always takes the queen. It is marked TEMPORARY for T-16's picker.
+  - **AI loop:**
+    - After each applied move, if it is the computer's turn, one `aiJob` on `viewModelScope` calls the AI.
+    - It waits out `MIN_AI_DISPLAY` (400 ms), measured with the injected `TimeSource`.
+    - It applies the move only if `generation` is unchanged. A `// T-19` comment marks where the move will be held behind dialogs.
+    - Cancellation is rethrown. Any other exception goes to `onAiError` (which logs by default) and sets `EngineError`; **Try again** restarts the turn.
+    - Clearing the ViewModel cancels the search.
+  - `Factory` builds it from `ChessApplication.container`: White, level 2, `Game.start()`. This is the temporary direct start from Home's **New game**.
+- **`StatusRow`** (design §4.3.4):
+  - **Decorative indicator:**
+    - the turn dot in the player's colour
+    - the board's check badge
+    - a 20 dp spinner
+    - `info` and `error` icons
+    - `flag` for a finished game
+  - **Text:** `titleMedium`, and it wraps.
+  - **Containers:** `errorContainer` for check and the engine error, `secondaryContainer` for game over.
+  - **Try again:** a `TextButton`, shown only for the engine error.
+  - **Live region:** the indicator and text are one merged node with `liveRegion = Polite` and `contentDescription` set to the status text (tech design §8.2). Its test tag is `status_row`.
+- **`GameScreen`** is split into `GameRoute` and a stateless `GameScreen(state, onAction, onHome)`. `GameRoute` collects the ViewModel's state with `collectAsStateWithLifecycle`.
+  - `GameScreen` has the top bar titled "Level 2 · Casual" (`level_label` + `level_name_n`), then the real `ChessBoard` wired to `SquareTap`, then the status row. The board is full width and square, and shrinks if the height is short.
+  - `ChessNavHost` routes `Game` to `GameRoute`.
+- **Strings:** none new. Everything shown comes from existing copy-deck keys (`status_*`, `result_*`, `level_*`, `action_try_again`).
+  - Lint's `UnusedResources` count fell from 86 to 68.
+  - T-26 (running in parallel) can merge `strings.xml` without a conflict.
+- **Dependencies** (both already in the catalog, design §1.2):
+  - `androidx.lifecycle:lifecycle-viewmodel-compose` (implementation), for `viewModel(factory)`
+  - `kotlinx-coroutines-test` (testImplementation)
+
+### Files touched
+- New: `app/src/main/kotlin/chess/app/ai/{AiPlayer,RandomMoveAiPlayer}.kt`, `app/src/main/kotlin/chess/app/ui/game/{GameAction,GameUiMapper,GameViewModel,StatusRow}.kt`.
+- Changed: `app/build.gradle.kts`, `app/src/main/kotlin/chess/app/AppContainer.kt`, `app/src/main/kotlin/chess/app/nav/ChessNavHost.kt`, `app/src/main/kotlin/chess/app/ui/game/{GameUiState,GameScreen}.kt`.
+- Tests (new): `app/src/test/kotlin/chess/app/ai/{FakeAiPlayer,RandomMoveAiPlayerTest}.kt`, `app/src/test/kotlin/chess/app/testutil/MainDispatcherRule.kt`, `app/src/test/kotlin/chess/app/ui/game/{GameUiMapperTest,GameViewModelSelectionTest,GameViewModelAiTest,StatusRowTest,GameScreenTest}.kt`.
+- `docs/product/chess-vs-computer/screens/t15-demo.png` (the emulator screenshot) and this log.
+
+### Tests added (written first, seen failing)
+**Red:** `:app:compileDebugUnitTestKotlin` failed with `Unresolved reference 'AiPlayer'`, `'RandomMoveAiPlayer'`, `'GameViewModel'`, `'GameRoute'`, `'StatusRowTestTag'`, `'newAiPlayer'` and others. All 70 new tests passed on the first green run.
+
+**Mutation check (reverted; `grep -rn MUTATION app/src` finds nothing).** Six mutations together failed 12 tests across all five suites:
+- removing the 400 ms wait
+- removing the ViewModel's turn guard
+- removing the hint-timer cancel
+- mapping castling as `Move`
+- mapping en passant as `Capture`
+- making the live region `Assertive`
+
+At first the mapper masked the turn-guard mutation, because the status shows "thinking" either way. `tapsDuringTheComputersTurnAreIgnored` now also checks that a tap while the board is locked leaves no hint behind for the player's turn. With only that mutation applied, it fails.
+
+- `GameUiMapperTest` (JVM, 24):
+  - the start position and every piece kind
+  - Black at the bottom, with the board locked at the start
+  - the last move, including castling as the king's move with the rook moved
+  - the check square for both colours and on mate
+  - dots for quiet moves and rings for captures
+  - **en passant as a ring on the empty destination**
+  - **castling targets the king's destination** for both colours; the rook's square is not a target
+  - promotion vs capture-promotion
+  - the status for every combination of turn, check, hint and error
+  - every `GameEnd`, from FENs and a threefold knight shuffle
+  - game over wins over the hint and the error
+- `GameViewModelSelectionTest` (JVM, `runTest` + `MainDispatcherRule`, 18):
+  - the new-game defaults
+  - select, move, and reselect another own piece
+  - tapping the selected piece deselects it
+  - illegal empty and enemy squares deselect silently
+  - taps with nothing selected do nothing
+  - **an own piece with no legal moves selects nothing, and the hint lasts exactly 2,500 ms**
+  - reselecting such a piece
+  - the next tap ends the hint, and a repeat gets its own 2.5 s
+  - **taps during the computer's turn are ignored** and leave no hint behind
+  - taps after the game ends are ignored
+  - castling, en passant and auto-queen promotion by taps
+  - a checking move
+  - the action path TalkBack uses
+- `GameViewModelAiTest` (JVM, virtual time, 11):
+  - the computer is asked only after the player's move, with the game and the level
+  - **a 50 ms answer is applied exactly at 400 ms (not at 399); a 700 ms answer exactly at 700 ms**
+  - the board stays locked while the computer thinks
+  - as Black, the computer opens
+  - the computer's mate and the player's mate both end the game, with no search after the end
+  - an engine failure → `EngineError`, reported once; **Try again** → a move
+  - retry does nothing when there is no error
+  - **clearing the ViewModel cancels the search**, and no stale move is applied
+  - a whole game against the real `RandomMoveAiPlayer` stays legal to the end (or 200 plies)
+- `RandomMoveAiPlayerTest` (JVM, 7):
+  - legal moves in 5 positions (castling, en passant, promotion, check)
+  - the same seed gives the same moves
+  - the moves vary
+  - **it runs on the injected dispatcher**: a recording dispatcher sees the dispatch
+  - **the container's AI runs on the container's `default` dispatcher**
+  - cancellation
+  - it refuses a finished game
+- `StatusRowTest` (Robolectric Compose, 4):
+  - every `StatusUi` shows its copy-deck text and speaks it
+  - the live region is `LiveRegionMode.Polite`
+  - **Try again** appears only for the engine error, and it calls back
+- `GameScreenTest` (Robolectric Compose, 360 × 640 dp, 6). It runs through the real `GameRoute`, `ChessBoard` and `StatusRow`, with real touches on the board:
+  - **tap e2 then e4 → "e4, white pawn, last move to"**, plus "e2, empty, last move from" and "Computer is thinking…"
+  - three full moves against a scripted computer (e4 e5, Nf3 Nc6, Bc4 Nf6)
+  - the reply is not shown at 300 ms of main-looper time and is shown at 450 ms
+  - the no-legal-moves hint
+  - the "Level 2 · Casual" heading and the Home arrow
+  - Black sees h1 first, and the computer opens
+
+### Commands run
+- Baseline GATE before any change: **BUILD SUCCESSFUL**.
+  - Engine 198 tests, app 100 tests.
+  - Lint: 0 errors, 87 warnings.
+- Red: `./gradlew :app:testDebugUnitTest` → compilation FAILED, as above.
+- Mutation runs:
+  - `./gradlew :app:testDebugUnitTest --tests 'chess.app.ui.game.*'` with all six mutations → 106 tests, 12 failed
+  - the turn-guard mutation alone → 1 failed
+  - both reverted
+- GATE `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL**.
+  - `:engine:test`: 198 tests, 0 failures. This branch has T-6; T-7 and T-8 are on other branches.
+  - `:app:testDebugUnitTest`: **170 tests, 0 failures, 0 skipped** (20 suites; 70 new).
+  - Lint: 0 errors, 69 warnings. 68 are `UnusedResources` (down from 86), all pre-existing copy-deck keys for later screens; the other is `OldTargetApi` (deliberate).
+  - No Kotlin compiler warnings.
+- **Emulator (`chess36`)**, following `scripts/emulator.md`:
+  - **Boot:** a headless cold boot reached `sys.boot_completed=1` in 60 s. `wm size` 720x1280, density 320.
+  - **Install and launch:** `./gradlew :app:installDebug` installed on `chess36(AVD) - 16`. `am start -W` reported a COLD launch of 6.5 s total (first boot, unoptimised debug build).
+  - **System UI dialog:** right after boot, the emulator's System UI showed "System UI isn't responding" (not the app). "Wait" dismissed it.
+  - **Play:** moves were made with `adb shell input tap` on the 90 px squares, and the board was read back with `uiautomator dump` (the squares' content descriptions).
+    - The game went **1. e4 h5 2. Nf3 h4 3. Bc4 c6**.
+    - Each random computer reply appeared after the player's move, with "Your move" back in the status row.
+  - **Screenshot:** after selecting the c4 bishop (8 dots and a ring on f7), `adb exec-out screencap -p` saved `docs/product/chess-vs-computer/screens/t15-demo.png`.
+  - **Logs:** `adb logcat -d --pid=<app>` had no StrictMode, exception or `GameViewModel` lines, and the crash buffer was empty.
+  - **Shutdown:**
+    - `adb -s emulator-5554 emu kill` → "OK: killing emulator, bye bye", and `adb devices` was empty.
+    - The emulator's own `-kill … -sleep 20` watchdog exited by itself. After that, no `emulator` or `qemu` process remained.
+    - `grainlab_test` was not touched.
+
+### Deviations from the plan
+- **`StatusUi` is structured.** It has `NoLegalMoves` instead of tech design §6.3's `Hint(text)`, so the ViewModel holds no strings (scope change: hy/ru).
+- **`StatusUi.GameOver(GameEnd)`** shows the result title in the status row ("US-5 status only") until T-16's result panel. T-16 can grow `GameEnd` into its `GameResult`/`ResultUi` mapping.
+- **The engine error and Try again are already in** (the plan puts them in T-19), so a failed search is never a dead end. T-19 keeps them and adds the lifecycle and held-move parts.
+- **The live region speaks only the status sentence.**
+  - The structured `Announcement`, the event sentences ("You: pawn e2 to e4.") and the U+200B repeat trick belong to T-24, as the plan lists them there.
+  - Until then, TalkBack hears "Computer is thinking…" after the player's move. Design §5.4 instead folds that into the move sentence.
+- **Some `GameUiState` fields are not here yet:** `phase`, `overlay`, `result`, `canUndo`, `sanMoves` and `announcement`. The `GameUiState` KDoc lists which task adds each one.
+- **No lifecycle start/stop yet** (T-19). Leaving the screen cancels the search by clearing the ViewModel, but backgrounding the app does not pause it.
+- **`GameRoute` plus a stateless `GameScreen`**, instead of one `GameScreen`. `ChessNavHostTest` is unchanged and passes.
+- **Reduced motion:** the spinner is always animated. The static `hourglass_empty` icon comes in T-25.
+
+### Follow-ups
+- T-16: replace `GameViewModel.choosePromotion` (auto-queen) with `Overlay.Promotion(from, to)` and `GameAction.Promote`. The result panel replaces `StatusUi.GameOver` in the status row.
+- T-17:
+  - save after `applyMove`, where a comment marks the spot
+  - load the game on init
+  - when restoring with the computer to move, start the search on `ScreenStarted`
+- T-18: the New game sheet replaces the direct start and passes `player` and `level` to the ViewModel.
+- T-19:
+  - `AppContainer.newAiPlayer()` returns `EngineAiPlayer`
+  - delete `RandomMoveAiPlayer` and its test
+  - hold the move where the `// T-19` comment is
+  - add `ScreenStarted`/`ScreenStopped`
+- T-23: `GameLayout` takes over the board sizing from the simple column.
+- T-24: announcements go in the status row's live region (the `StatusRowTestTag` node), as event plus status sentences.
+- The scratchpad directory is shared with parallel agents; another agent's script replaced one of my files there. Keep throwaway scripts under the worktree's ignored `build/` folder instead.

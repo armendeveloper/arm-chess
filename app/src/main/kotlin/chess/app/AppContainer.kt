@@ -1,5 +1,9 @@
 package chess.app
 
+import chess.app.ai.AiPlayer
+import chess.app.ai.RandomMoveAiPlayer
+import kotlin.random.Random
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +22,7 @@ data class AppDispatchers(
  * Later tasks add, all built from here:
  * - T-17: the save `DataStore` and `GameRepository`
  * - T-18: the stats `DataStore`, `StatsRepository` and `NewGameCoordinator`
- * - T-19: the AI dispatcher, `Random` and the time source for `EngineAiPlayer`
+ * - T-19: `EngineAiPlayer` in place of T-15's random-move computer (same dispatcher and seam)
  */
 class AppContainer(
     val dispatchers: AppDispatchers = AppDispatchers(),
@@ -28,4 +32,15 @@ class AppContainer(
      * and then pressing Back (design §5.1). A failed child does not cancel its siblings.
      */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.io)
+
+    /** Measures the computer's think time against the 400 ms minimum (design US-6). */
+    val timeSource: TimeSource = TimeSource.Monotonic
+
+    /**
+     * A computer opponent for one Game screen. It chooses moves on [AppDispatchers.default], never
+     * on the main thread (tech design §6.5).
+     *
+     * TEMPORARY (T-15): a random-move player. T-19 returns `EngineAiPlayer` here.
+     */
+    fun newAiPlayer(): AiPlayer = RandomMoveAiPlayer(dispatchers.default, Random.Default)
 }
