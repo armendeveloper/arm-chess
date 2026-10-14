@@ -673,7 +673,7 @@ flowchart LR
 - **Gate approved.** The design (02) and this plan are approved, and so are the designer's provisional choices (§13 of the tech design): dark theme follows the system, dynamic colour is off, Undo after resign follows the PRD, capture announcements include the from-square, and "read all pieces" is deferred.
 - **H-1 App name:** "Arm Chess" (repo `arm-chess`). `applicationId` is `io.github.armendeveloper.armchess`; use it from T-1 instead of a placeholder. Namespace stays `chess.app`.
 - **H-2 SDK:** approved. Installed by the orchestrator before T-1: `platforms;android-37.0`, `build-tools;37.0.0`, `system-images;android-36.1;google_apis_playstore;x86_64`. Plain `android-36` Play images are not offered, so use the 36.1 image when T-2 creates the `chess36` AVD. On Windows, `sdkmanager.bat` splits on `;`, so pass package paths with `/` (e.g. `platforms/android-37.0`).
-- **H-3 Reference device:** still open. Needed before T-11.
+- **H-3 Reference device (decided later the same day):** the user chose **emulator only**. T-11 calibrates level 4 on the `chess36` AVD (API 36.1, x86_64, 2 GB RAM, WHPX) with a safety margin for slower phones: p95 at least 25% under the 4 s cap. The PRD OQ-6 physical device is waived for v1. Risk: level 4 may run close to its 3.9 s deadline on very old phones. That only weakens it slightly (node-budget design), it never makes it slow.
 - **H-5 `allowBackup=false`:** approved.
 - **H-6 Repo:** the user asked for a **public GitHub repo** (account `armendeveloper`). T-1 runs `git init`. The orchestrator creates the remote and pushes after T-1 is green.
 
