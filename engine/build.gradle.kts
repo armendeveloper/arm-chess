@@ -25,7 +25,7 @@ dependencies {
 // The perft gate (design §4.2): `test` runs the gate depths; the release depths are tagged with the
 // JUnit 4 category chess.engine.PerftDeep and run only by `perftDeep`.
 tasks.test {
-    useJUnit { excludeCategories("chess.engine.PerftDeep", "chess.engine.SearchBench") }
+    useJUnit { excludeCategories("chess.engine.PerftDeep", "chess.engine.SearchBench", "chess.engine.LevelChecks") }
 }
 
 val perftDeep by tasks.registering(Test::class) {
@@ -47,6 +47,20 @@ val searchBench by tasks.registering(Test::class) {
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnit { includeCategories("chess.engine.SearchBench") }
+    testLogging { showStandardStreams = true }
+    shouldRunAfter(tasks.test)
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+// The longer US-6 level checks (T-9, design §4.7): K+Q v K conversion by levels 3 and 4, and variety,
+// at the real level parameters with the deadline off.
+val levelChecks by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Runs the K+Q v K and variety checks at the real level parameters (design §4.7)."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnit { includeCategories("chess.engine.LevelChecks") }
     testLogging { showStandardStreams = true }
     shouldRunAfter(tasks.test)
     outputs.upToDateWhen { false }

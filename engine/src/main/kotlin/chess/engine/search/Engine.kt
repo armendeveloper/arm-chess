@@ -37,7 +37,15 @@ class Engine(ttEntriesLog2: Int = TranspositionTable.DEFAULT_ENTRIES_LOG2) {
      * the result of a cancelled search ([StopReason.Cancelled]) is still legal but should be
      * discarded.
      *
-     * @param random reserved for level randomisation (T-9). The search itself is deterministic.
+     * The level's [LevelParams.randomisation] then picks the move from the root scores of the
+     * iteration the search used ([SearchResult.choice] says how). Only an only move and a cancelled
+     * search are never randomised.
+     *
+     * The search itself is deterministic, and the randomisation draws only from [random]. So with the
+     * same engine state (a fresh engine, or [newGame] before the game's first move and the same moves
+     * since), the same position, parameters without a deadline and the same seed give the same move.
+     *
+     * @param random the source of every random choice the level makes; seed it for repeatable play.
      * @param nanoTime the clock, injectable for tests.
      * @param shouldStop polled every [CHECK_INTERVAL] nodes; return true to cancel.
      * @throws IllegalArgumentException when the game is over.
@@ -45,12 +53,12 @@ class Engine(ttEntriesLog2: Int = TranspositionTable.DEFAULT_ENTRIES_LOG2) {
     fun search(
         game: Game,
         params: LevelParams,
-        @Suppress("UNUSED_PARAMETER") random: Random,
+        random: Random,
         nanoTime: () -> Long = System::nanoTime,
         shouldStop: () -> Boolean = { false },
     ): SearchResult {
         require(game.status == GameStatus.Ongoing) { "Cannot search a finished game (${game.status})" }
-        return search.run(game, params, nanoTime, shouldStop)
+        return search.run(game, params, random, nanoTime, shouldStop)
     }
 
     companion object {
@@ -64,10 +72,13 @@ class Engine(ttEntriesLog2: Int = TranspositionTable.DEFAULT_ENTRIES_LOG2) {
  *
  * @property move the move to play: always legal in the searched position, never [Move.NONE].
  * @property scoreCp the score in centipawns for the side to move. A forced mate is
- *   `±(MATE_SCORE - plies to mate)`; see [mateInPlies].
+ *   `±(MATE_SCORE - plies to mate)`; see [mateInPlies]. For a randomised [choice] it is the score
+ *   the search gave [move]: exact for the moves the level picks among, and an upper bound for a
+ *   uniformly random move ([MoveChoice.RandomMove]) that the search found worse than the best.
  * @property depth the deepest completed iteration (0 for [StopReason.OnlyMove]).
  * @property nodes positions visited, quiescence included.
  * @property elapsedMs wall-clock time by the search's clock.
+ * @property choice how the level chose [move] (design ADR-3). The move can still be the search's best.
  */
 data class SearchResult(
     val move: Move,
@@ -76,6 +87,7 @@ data class SearchResult(
     val nodes: Long,
     val elapsedMs: Long,
     val stopReason: StopReason,
+    val choice: MoveChoice = MoveChoice.Best,
 ) {
     /** Plies to a forced mate: positive when the side to move mates, negative when it is mated, else null. */
     val mateInPlies: Int?
@@ -107,4 +119,28 @@ enum class StopReason {
 
     /** There was only one legal move, so nothing was searched. */
     OnlyMove,
+}
+
+/**
+ * How a level chose its move from the root scores ([Randomisation]). It names the rule that was
+ * applied, so the chosen move can still be the search's best move.
+ */
+enum class MoveChoice {
+    /**
+     * The search's best move: level 4; level 2 four times in five; level 3 once the game is decided;
+     * an only move; or a cancelled search.
+     */
+    Best,
+
+    /** A uniformly random legal move (level 1, half the time). */
+    RandomMove,
+
+    /** The best score after root noise (level 1, the other half). */
+    NoisyBest,
+
+    /** A uniform pick among the best-scoring root moves (level 2, one time in five). */
+    FromTop,
+
+    /** A uniform pick among root moves within the margin of the best (level 3, while the game is undecided). */
+    WithinMargin,
 }

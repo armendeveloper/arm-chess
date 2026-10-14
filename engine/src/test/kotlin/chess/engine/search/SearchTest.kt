@@ -248,8 +248,8 @@ class SearchTest {
         for (fen in ttPositions) {
             val game = gameOf(fen)
             for (depth in 1..4) {
-                val with = Search(TranspositionTable(entriesLog2 = 16)).run(game, fixedDepth(depth), System::nanoTime) { false }
-                val without = Search(tt = null).run(game, fixedDepth(depth), System::nanoTime) { false }
+                val with = Search(TranspositionTable(entriesLog2 = 16)).run(game, fixedDepth(depth), kotlin.random.Random(0), System::nanoTime) { false }
+                val without = Search(tt = null).run(game, fixedDepth(depth), kotlin.random.Random(0), System::nanoTime) { false }
                 assertEquals(without.scoreCp, with.scoreCp, "$fen depth $depth score")
                 assertEquals(without.move, with.move, "$fen depth $depth move")
                 assertTrue(with.nodes <= without.nodes, "$fen depth $depth: the TT should not cost nodes (${with.nodes} > ${without.nodes})")
@@ -265,7 +265,7 @@ class SearchTest {
         val seen = ArrayList<RootMoveSeen>()
         val search = Search(TranspositionTable(entriesLog2 = 16))
         search.rootMoveListener = RootMoveListener { depth, index, move, score, nodes -> seen += RootMoveSeen(depth, index, move, score, nodes) }
-        search.run(game, params, System::nanoTime) { false }
+        search.run(game, params, kotlin.random.Random(0), System::nanoTime) { false }
         return seen
     }
 
@@ -299,7 +299,7 @@ class SearchTest {
                 val completed = iteration.filter { it.nodes < stopAt }
                 val expected = completed.first { it.score == completed.maxOf { c -> c.score } }
 
-                val result = Search(TranspositionTable(entriesLog2 = 16)).run(game, budget(nodeBudget), System::nanoTime) { false }
+                val result = Search(TranspositionTable(entriesLog2 = 16)).run(game, budget(nodeBudget), kotlin.random.Random(0), System::nanoTime) { false }
                 assertEquals(StopReason.NodeBudget, result.stopReason, fen)
                 assertEquals(stopAt, result.nodes, fen)
                 assertEquals(depth - 1, result.depth, "$fen: depth $depth was not completed")

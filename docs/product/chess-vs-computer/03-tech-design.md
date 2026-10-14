@@ -360,10 +360,12 @@ Precondition: `game.status == Ongoing`; otherwise the method throws `IllegalArgu
 |---|---|---|---|---|---|
 | 1 Beginner | 1 | 5,000 | 500 ms → stop at 400 ms | off (so it leaves pieces hanging) | 50%: uniform random legal move. Otherwise, the best 1-ply score after adding uniform noise of ±40 cp to each root move |
 | 2 Casual | 2 (ID) | 30,000 | 1,000 → 900 ms | captures only, max 4 plies | 20%: uniform pick from the top 5 exact root scores |
-| 3 Club | 6 (ID) | 250,000 | 2,000 → 1,900 ms | full | Uniform pick among root moves scoring ≥ best − 20 cp (needs a root re-search with a lowered alpha) |
+| 3 Club | 6 (ID) | 250,000 | 2,000 → 1,900 ms | full | Uniform pick among root moves scoring ≥ best − 20 cp (needs a root re-search with a lowered alpha), while the game is undecided: once the best score is ≥ 400 cp from 0 (mates included), the best move (T-9) |
 | 4 Strong | 64 (ID) | 1,500,000 (provisional; set in T-11 from the reference device's nodes per second) | 4,000 → 3,900 ms | full | none |
 
   - **Exact root scores** for levels 1 to 3 (needed for "top 5" or "within 20 cp"): at the final depth, each root move is searched with a window of `[best − margin − 1, +∞)` rather than a null window. Moves inside the margin then get exact scores. This is cheap at those depths.
+    - *As built (T-9):* the final depth isn't known in advance (the budget may end an iteration), so the window is applied at every iteration, and the pick uses the root scores of the iteration whose move the search would play. The margin is 20 cp for level 3, 2 × 40 cp for level 1's noise (a move further below can't win after noise), and "5th best so far − 1" for level 2's top 5. Level 1's random-move and level 2's pick-or-not draws happen before the search, so the window is widened only when the pick needs it.
+    - *Level 3 and decided games (T-9):* with the 20 cp pick in every position, level 3 failed to mate a level-1 defender in 16 of 200 K+Q v K games (50-move rule). There the progress moves are only a few centipawns apart, and random picks among them wander. Playing the best move once |best| ≥ 400 cp gives 200/200, worst case 20 moves. Variety in undecided positions is unchanged.
   - **Deadline margin.** The deadline is the cap minus 100 ms. That allows for result hand-off and the next stop check (≤ 1,024 nodes, a few milliseconds even on slow devices). So "never exceeds cap by more than 200 ms" holds with room to spare. A JVM test with a fake `nanoTime` asserts the deadline logic. The device benchmark (T-11) asserts the real p95.
   - The **400 ms minimum display time** is UI pacing (§6.5), not engine time. It overlaps the search; it is not added to it.
 - **Consequences.**
@@ -392,9 +394,10 @@ val strengthTest by tasks.registering(Test::class) {
 - **Assertions:** L2 ≥ 70% vs L1; L3 ≥ 70% vs L2; L4 ≥ 70% vs L3; L4 ≥ 95% vs L1. Draws count 0.5.
 - **Report:** a Markdown table in `engine/build/reports/strength/match.md` (W/D/L by colour, average plies, adjudications) for tuning.
 - **Cost:** about 15 to 25 minutes on 8 cores, depending on the measured JVM nodes per second (estimate). `-Pmatch.games=20` gives a smoke run. The full check is a release gate and a nightly CI job, not a per-commit check.
-- **Other US-6 tests** (in the default `test` task, so they run every commit):
+- **Other US-6 tests** (in the default `test` task, so they run every commit, except K+Q v K and variety; see below):
   - *K+Q v K competence:* 10 fixed positions, levels 3 and 4 against a level-1 defender; mate is required before the 50-move rule in 10/10. Deadline disabled.
   - *Variety:* 5 fixed middlegame positions × 10 seeds × levels 1 to 3. At least one position yields ≥ 2 distinct moves per level.
+  - *As built (T-9):* these two take about 30 s at the real level parameters, so they run in `:engine:levelChecks` (JUnit category `chess.engine.LevelChecks`), not in `test`. The default `test` covers the randomisation rules, rates, exact root scores, determinism, legality and the deadline with reduced budgets.
   - *Legality:* 1,000 random self-play plies per level; every move is in `legalMoves()`.
   - *Stop:* `shouldStop` flips after N nodes and the search returns within 1,024 nodes. With the deadline passed at start, the search still returns a legal depth-1 move.
 

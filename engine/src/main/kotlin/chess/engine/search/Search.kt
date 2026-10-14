@@ -9,6 +9,7 @@ import chess.engine.rules.Draws
 import chess.engine.rules.Game
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.random.Random
 
 /** Score constants, in centipawns from the side to move's point of view. */
 internal object Score {
@@ -37,6 +38,10 @@ internal fun interface RootMoveListener {
  * Draws inside the search score 0: a position that repeats one on the current path or in the game
  * since the last pawn move or capture (a twofold repetition is enough), the 50-move rule (unless the
  * side to move is mated), stalemate and the PRD's insufficient-material cases.
+ *
+ * The level's randomisation ([RootChoice]) acts only at the root: it sets each root move's window,
+ * so that every move the level might pick gets an exact score, and picks the move after the search.
+ * With [Randomisation.None] the root window is the plain alpha-beta one.
  *
  * The search works on one mutable [Board] with preallocated move buffers, so it does not allocate
  * per node. Not thread-safe.
@@ -75,7 +80,11 @@ internal class Search(private val tt: TranspositionTable?) {
         ordering.clear()
     }
 
-    fun run(game: Game, params: LevelParams, nanoTime: () -> Long, shouldStop: () -> Boolean): SearchResult {
+    /**
+     * Searches [game]'s position and picks the move to play, using [random] only for the level's
+     * [LevelParams.randomisation] (see [RootChoice]).
+     */
+    fun run(game: Game, params: LevelParams, random: Random, nanoTime: () -> Long, shouldStop: () -> Boolean): SearchResult {
         start(game, params, nanoTime, shouldStop)
 
         val rootMoves = IntArray(MoveGen.MAX_MOVES)
@@ -91,6 +100,14 @@ internal class Search(private val tt: TranspositionTable?) {
         }
         orderRootMoves(rootMoves, rootScores, count)
 
+        // Drawn before the search, so the root window is widened only when the pick needs it.
+        val choice = RootChoice.draw(params.randomisation, random)
+        // The root moves and scores of the iteration whose result is used, for the pick.
+        val usedMoves = IntArray(count)
+        val usedScores = IntArray(count)
+        var usedCount = 0
+        var usedBest = 0
+
         var bestMove = Move(rootMoves[0])
         var bestScore = -Score.INFINITY
         var completedDepth = 0
@@ -98,19 +115,23 @@ internal class Search(private val tt: TranspositionTable?) {
             if (depth > 1 && budgetOrDeadlineReached()) break
             iterationDepth = depth
 
-            var alpha = -Score.INFINITY
+            choice.newIteration()
             var iterationBest = -1
+            var iterationBestScore = -Score.INFINITY
+            var scored = 0
             keys[keyCount++] = board.key
             for (i in 0 until count) {
                 val move = Move(rootMoves[i])
                 board.make(move)
-                val score = -negamax(depth - 1, -Score.INFINITY, -alpha, ply = 1)
+                val score = -negamax(depth - 1, -Score.INFINITY, -choice.alpha(), ply = 1)
                 board.unmake(move)
                 if (stopped) break
                 rootScores[i] = score
+                scored = i + 1
+                choice.add(score)
                 rootMoveListener?.onRootMove(depth, i, move, score, nodes)
-                if (score > alpha) {
-                    alpha = score
+                if (score > iterationBestScore) {
+                    iterationBestScore = score
                     iterationBest = i
                 }
             }
@@ -121,19 +142,31 @@ internal class Search(private val tt: TranspositionTable?) {
                 // another move has already beaten it, or if no iteration completed at all.
                 if (iterationBest > 0 || (iterationBest == 0 && completedDepth == 0)) {
                     bestMove = Move(rootMoves[iterationBest])
-                    bestScore = rootScores[iterationBest]
+                    bestScore = iterationBestScore
+                    rootMoves.copyInto(usedMoves, endIndex = scored)
+                    rootScores.copyInto(usedScores, endIndex = scored)
+                    usedCount = scored
+                    usedBest = iterationBest
                 }
                 break
             }
             bestMove = Move(rootMoves[iterationBest])
-            bestScore = alpha
+            bestScore = iterationBestScore
             completedDepth = depth
+            rootMoves.copyInto(usedMoves, endIndex = count)
+            rootScores.copyInto(usedScores, endIndex = count)
+            usedCount = count
+            usedBest = iterationBest
             sortRootMoves(rootMoves, rootScores, count, iterationBest)
             // A proven mate cannot get shorter (or, when being mated, longer) with more depth.
             if (abs(bestScore) >= Score.MATE_BOUND && Score.MATE - abs(bestScore) <= depth) break
         }
         if (bestScore == -Score.INFINITY) bestScore = 0 // cancelled before any move was scored
-        return result(bestMove, bestScore, completedDepth, stopReason)
+        if (stopReason == StopReason.Cancelled || usedCount == 0 || choice.planned == MoveChoice.Best) {
+            return result(bestMove, bestScore, completedDepth, stopReason)
+        }
+        val pick = choice.choose(usedScores, usedCount, usedBest, random)
+        return result(Move(usedMoves[pick]), usedScores[pick], completedDepth, stopReason, choice.applied)
     }
 
     private fun start(game: Game, params: LevelParams, nanoTime: () -> Long, shouldStop: () -> Boolean) {
@@ -164,8 +197,8 @@ internal class Search(private val tt: TranspositionTable?) {
         for (i in earliest until last) keys[keyCount++] = positions[i].repetitionKey
     }
 
-    private fun result(move: Move, score: Int, depth: Int, reason: StopReason): SearchResult =
-        SearchResult(move, score, depth, nodes, (nanoTime() - startNanos) / 1_000_000, reason)
+    private fun result(move: Move, score: Int, depth: Int, reason: StopReason, choice: MoveChoice = MoveChoice.Best): SearchResult =
+        SearchResult(move, score, depth, nodes, (nanoTime() - startNanos) / 1_000_000, reason, choice)
 
     /**
      * Checked before each iteration after the first: sets [stopReason] when the node budget or the
