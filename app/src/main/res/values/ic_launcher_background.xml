@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light-theme primaryContainer for seed #6B4E37 (design §6.3: "a knight on primaryContainer").
+         Keep in sync with PrimaryContainerLight in ui/theme/Color.kt (T-12). -->
+    <color name="ic_launcher_background">#FFDCC3</color>
+</resources>
