@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon monochrome layer (themed icons, Android 13+). The system uses only the alpha channel, so this is
+  the knight from ic_launcher_foreground.xml as a single-colour silhouette with the eye, nostril and mane cut out
+  (even-odd holes). Same geometry and transform as the foreground.
+  Derived from Chess_ndt45.svg by Colin M.L. Burnett (Cburnett). BSD-3-Clause; see docs/licences/pieces-cburnett.md.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <group
+      android:scaleX="1.4"
+      android:scaleY="1.4"
+      android:translateX="23.2"
+      android:translateY="21.8">
+    <!-- Body with the mane line as a hole. -->
+    <path
+        android:pathData="M22,10C32.5,11 38.5,18 38,39L15,39C15,30 25,32.5 23,18Z M24.55,10.4L24.25,11.5L24.8,11.6C27.901,12.077 31.124,13.834 33.375,18.094C35.626,22.353 36.297,29.057 35.8,39L37.5,39C38.003,28.943 36.624,22.147 34.25,17.656C31.876,13.166 28.461,11.023 25.063,10.5L24.55,10.4Z"
+        android:fillColor="#000000"
+        android:fillType="evenOdd"/>
+    <!-- Head with the nostril and eye as holes. -->
+    <path
+        android:pathData="M24,18C24.384,20.911 18.447,25.369 16,27C13,29 13.181,31.343 11,31C9.958,30.056 12.413,27.962 11,28C10,28 11.187,29.232 10,30C9,30 5.997,31 6,26C6,24 12,14 12,14C12,14 13.886,12.098 14,10.5C13.274,9.506 13.5,8.5 13.5,7.5C14.5,6.5 16.5,10 16.5,10L18.5,10C18.5,10 19.282,8.008 21,7C22,7 22,10 22,10Z M9.5,25.5A0.5,0.5 0,1 1,8.5 25.5A0.5,0.5 0,1 1,9.5 25.5Z M14.933,15.75A1.5,0.5 120,1 1,14.067 15.25A1.5,0.5 120,1 1,14.933 15.75Z"
+        android:fillColor="#000000"
+        android:fillType="evenOdd"/>
+  </group>
+</vector>

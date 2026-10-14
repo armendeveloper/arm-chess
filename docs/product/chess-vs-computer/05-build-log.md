@@ -422,3 +422,61 @@ Red: with the tests written and the T-4 code unchanged, `./gradlew :engine:test`
 - T-6: hash the en passant file only when a pawn of the side to move can capture. Extend the make/unmake round-trip tests to compare the Zobrist key.
 - T-6: reject a FEN where the side not to move is in check (carried over from T-4).
 - `perftDeep` takes about 25–50 s here. Run it before each release (T-27/T-28 checklists).
+## 2026-10-14 — T-13: Piece artwork and licence record
+
+**Stories:** US-3 (pieces), PRD artwork dependency, design 02 §6.3.
+
+### What changed and why
+- **Licence check, all 12 files** (the designer had checked 2). Used the Commons API to read the wikitext, description-page history and upload history of every `File:Chess_{k,q,r,b,n,p}{l,d}t45.svg` page.
+  - All 12 offer `{{self|GFDL|migration=relicense|BSD|GPL}}`, with `author={{U|Cburnett}}`.
+  - On every page, Cburnett **himself** added BSD (2007-01-12, "Dual license with BSD") and GPL (2007-12-12).
+  - One IP vandal edit to the licence block of `Chess_rdt45.svg` (2023) was reverted, and the page is clean now.
+  - So the Cburnett set stays. No fallback was needed.
+- **Revision choice:** every file has been re-uploaded by other Commons users since 2010 (cleanups, symmetry fixes). We converted **Cburnett's own last revision (2007-01-03)** of each file, so all the artwork is the BSD grantor's own work. We rendered both versions on light and dark squares at several sizes and compared them. The differences are cosmetic. SHA-1s and URLs for both are in `docs/licences/pieces-cburnett.md`.
+- **Conversion:**
+  - Downloaded into a fresh temp directory outside the repo; checked each file against its Commons SHA-1; scanned for active content (none).
+  - Converted with `Svg2Vector` from `com.android.tools:sdk-common:32.4.1`, the converter behind Android Studio's Vector Asset tool, run headless. No warnings.
+  - The only manual change to each output file is a provenance and licence header comment.
+- **Visual check:** a throwaway Robolectric native-graphics test rendered all 12 drawables at 24, 72, 96 and 288 px on `#F0D9B5` and `#8C6A4E`. They look right; the black pieces' white details survive at 96 px. The test was deleted, not committed.
+- **Launcher icon:** an adaptive icon in `mipmap-anydpi/`.
+  - Foreground: the black knight, scaled 1.4× inside the 66 dp safe zone.
+  - Background: `@color/ic_launcher_background` #FFDCC3, the light `primaryContainer` that T-12's `Color.kt` uses for seed #6B4E37.
+  - Monochrome: a knight silhouette with the eye, nostril and mane as even-odd holes, for themed icons.
+  - Manifest: added only `android:icon` and `android:roundIcon`.
+- `docs/licences/pieces-cburnett.md` records:
+  - per file: URL, author, licence options, who added BSD and when, the revision used and its SHA-1, plus the current revision;
+  - the check date;
+  - the full BSD-3-Clause notice for S7b and the S7 attribution line.
+
+### Files touched
+`app/src/main/res/drawable/piece_{w,b}{k,q,r,b,n,p}.xml` (12), `app/src/main/res/drawable/ic_launcher_{foreground,monochrome}.xml`, `app/src/main/res/mipmap-anydpi/ic_launcher{,_round}.xml`, `app/src/main/res/values/ic_launcher_background.xml`, `app/src/main/AndroidManifest.xml` (icon attributes only), `app/src/test/kotlin/chess/app/PieceArtResourcesTest.kt`, `docs/licences/pieces-cburnett.md`, this log.
+
+### Tests added (written first, seen failing)
+`chess.app.PieceArtResourcesTest` (Robolectric):
+- `allTwelvePieceDrawablesInflateAsVectorDrawablesWithNonZeroSize`: each `R.drawable.piece_*` resolves to its name, inflates as `VectorDrawable`, and has a non-zero, square intrinsic size.
+- `launcherIconsAreAdaptiveWithForegroundBackgroundAndMonochromeLayers`: `ic_launcher` and `ic_launcher_round` are `AdaptiveIconDrawable`s with a background, a vector foreground and a vector monochrome layer.
+- `manifestDeclaresLauncherIcon`: `ApplicationInfo.icon == R.mipmap.ic_launcher`.
+
+Red: compile errors (`Unresolved reference 'drawable'`) before the resources existed.
+
+### Commands run
+- `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` before any change: BUILD SUCCESSFUL (baseline).
+- GATE after the change (`./gradlew clean` first): **BUILD SUCCESSFUL**.
+  - `:engine:test`: 1 test, 0 failures.
+  - `:app:testDebugUnitTest`: 4 tests, 0 failures (`MainActivityTest` 1, `PieceArtResourcesTest` 3).
+  - Lint: 0 errors, 1 warning (`OldTargetApi`, expected). `MissingApplicationIcon` is gone.
+  - An earlier run flagged `ObsoleteSdkInt` for `mipmap-anydpi-v26` (minSdk is 26), so the icons moved to `mipmap-anydpi`.
+- `aapt2 dump badging app-debug.apk` → `application: label='Arm Chess' icon='res/mipmap-anydpi-v21/ic_launcher.xml'`. aapt2 versions the folder itself.
+- **Build-cache gotcha:** after renaming `mipmap-anydpi-v26/` to `mipmap-anydpi/`, `:app:mergeDebugResources` was restored FROM-CACHE from the old layout. `processDebugResources` then failed with `resource mipmap/ic_launcher not found`, even after `clean`. The cache key apparently doesn't include the resource folder name. Fixed by re-running `:app:mergeDebugResources :app:packageDebugResources --rerun-tasks` once, which re-stores the entry. `--no-build-cache` also passes. Only a local build cache that holds the intermediate `-v26` layout from this session is affected.
+
+### Deviations from the plan
+- **Revision:** the author's own 2007 revisions rather than the current Commons revisions (reason above).
+- **Conversion tool:** the Vector Asset converter ran headless (`Svg2Vector`), not through Android Studio's UI. It is the same code.
+- **Icon folder:** `mipmap-anydpi/` rather than `mipmap-anydpi-v26/` (lint `ObsoleteSdkInt`; minSdk is 26).
+- **Not committed:** the helper scripts (download, SHA-1 check, conversion, render). The licence record has the URLs and SHA-1s, so the inputs can be checked again.
+- **Manual step still open:** the plan asks for a PR screenshot of the 12 pieces at 96 dp on light and dark squares. It was rendered locally (Robolectric) but is not in the repo.
+
+### Follow-ups
+- T-26: S7 shows `about_pieces`, and S7b shows the BSD notice from `docs/licences/pieces-cburnett.md` (the binary must carry the full text: clause 2).
+- T-12 / merge: keep `ic_launcher_background` (#FFDCC3) in sync with `PrimaryContainerLight` if the theme colours change.
+- T-14: `PieceArt` maps pieces to `R.drawable.piece_{w,b}{k,q,r,b,n,p}`. Each drawable is 45 dp intrinsic; scale it to the square.
