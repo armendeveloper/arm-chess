@@ -28,6 +28,7 @@ class ResourcesTest {
             R.drawable.ic_error,
             R.drawable.ic_hourglass_empty,
             R.drawable.ic_crop_free,
+            R.drawable.ic_chevron_right, // T-26: the "Open-source licences" row on About
         )
         icons.forEach { id ->
             assertIs<VectorDrawable>(context.getDrawable(id), context.resources.getResourceEntryName(id))
