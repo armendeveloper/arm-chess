@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.licensee)
 }
 
 android {
@@ -87,4 +88,17 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// Licence allow-list (tech design §9.4). Any other licence, GPL and LGPL included, fails
+// :app:licenseeAndroidDebug / :app:licenseeAndroidRelease. Those tasks also run inside every
+// assemble and unit-test build, because the report they write is bundled into the APK's assets
+// (assets/app/cash/licensee/artifacts.json), which feeds S7b Licences.
+licensee {
+    allow("Apache-2.0")
+    allow("MIT")
+    allow("BSD-3-Clause")
+    // MIT and BSD-3-Clause are pre-approved but unused today; don't warn about them on every build.
+    unusedAction(app.cash.licensee.UnusedAction.IGNORE)
+    bundleAndroidAsset.set(true)
 }

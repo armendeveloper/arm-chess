@@ -1113,3 +1113,89 @@ Both runs chose the same moves and reached the same depths (deterministic). Run 
 - T-19: call `Engine.newGame()` on new game **and after undo** (design §4.6).
 - T-10/T-11: the JVM speed is about 1.7 M nodes/s; the level-4 budget will be set from the device.
 - Release review (T-26/T-27): decide whether the About screen should credit the Simplified Evaluation Function (`docs/licences/eval-tables.md`).
+
+## 2026-10-14 — T-26: About and Licences screens, licence allow-list
+
+**Stories:** PRD piece-art dependency and privacy promise, design §4.9 (S7 About, S7b Licences), tech design §9.4.
+
+### What changed and why
+- **Licence allow-list: `app.cash.licensee` 1.14.1** (already pinned in the catalog). It works with AGP 9.4.1 and built-in Kotlin, so the plan's fallback (a hand-written `assets/licences.json`) was not needed.
+  - `allow("Apache-2.0")`, `allow("MIT")`, `allow("BSD-3-Clause")`. Anything else fails `:app:licenseeAndroidDebug` / `:app:licenseeAndroidRelease` (aggregate: `:app:licensee`).
+  - `bundleAndroidAsset = true` writes each variant's report to `assets/app/cash/licensee/artifacts.json`. Because the asset depends on the validation task, **every `assembleDebug` and `testDebugUnitTest` also runs the check**, so the GATE fails on a disallowed licence.
+  - `unusedAction(IGNORE)`: MIT and BSD-3-Clause are pre-approved but unused today, so the build no longer warns about them.
+  - The plugin adds no new Gradle deprecation warnings (the remaining `Configuration.setVisible` one comes from AGP's `BasePlugin`).
+- **Licences found** (release runtime classpath, 107 artifacts): **all Apache-2.0**, none unknown. 98 are AndroidX (activity, annotation, appcompat-resources, arch core, autofill, collection, Compose animation/foundation/material-ripple/material3/runtime/ui, concurrent-futures, core, core-splashscreen, emoji2, graphics-path, lifecycle, navigation, navigationevent, profileinstaller, savedstate, startup, tracing, vectordrawable, versionedparcelable, window). The rest: `com.google.guava:listenablefuture`, `org.jetbrains:annotations`, `org.jetbrains.kotlin:kotlin-stdlib`, `kotlinx-coroutines-android`/`-core`/`-core-jvm`, `kotlinx-serialization-core`/`-core-jvm` and `org.jspecify:jspecify`. The debug report has 5 more (Compose `ui-tooling*` and `ui-test-manifest`, all Apache-2.0).
+- **`OpenSourceLicences`** (`ui/about/OpenSourceLicences.kt`) parses the report with `org.json` (no new dependency) into `LibraryLicence`/`LicenceInfo`, sorted by name. `load()` returns null when the asset is missing (logged with `Log.w`) or malformed (`Log.e`). `textFor(spdxId)` maps an SPDX id to its bundled text; only `Apache-2.0` is needed today.
+- **Bundled legal texts, in English, as `res/raw` files** (not translatable strings, per the hy/ru scope change):
+  - `cburnett_bsd.txt`: the notice copied byte for byte from `docs/licences/pieces-cburnett.md`. A test compares the two.
+  - `licence_apache_2_0.txt`: the Apache License 2.0 terms as AndroidX ships them in `META-INF/androidx/*/LICENSE.txt` (40 cached copies, all identical). Hard line wraps were joined into one line per paragraph so the text reflows on a phone. A script checked that the words are unchanged and in the same order.
+  - `readRawText` turns CRLF into LF, because this repo checks out with `core.autocrlf=true`.
+- **S7 About**
+  - The version line is now `Version 1.0.0 (1)`. `about_version` became `Version %1$s (%2$d)`, filled from `BuildConfig.VERSION_NAME` and `VERSION_CODE`.
+  - **View licence** opens a dialog with the attribution line and the full Cburnett BSD notice.
+  - **Open-source licences** is now a full-width `LinkRow` with a trailing `chevron_right` (Material Symbols, auto-mirrored). Its text lines up with the column text. This fixes the T-12 follow-up: `ListItem`'s own 16 dp inset had pushed it out of line.
+  - The row is hidden when the build has no licence report (design §4.9). That's the `licencesAvailable` parameter, which defaults to the bundled report.
+- **S7b Licences**
+  - A "Libraries" heading, then one row per library in the report: the name, then `group:artifact · version N`, then the licence name. Each row is one TalkBack node, with the click label "View licence".
+  - A tap opens a dialog with the coordinates, `Licence: <name>` and the full licence text. A licence with no bundled text shows its URL instead.
+  - Then a "Chess pieces" heading, the attribution and the full BSD notice.
+  - The open dialog is `rememberSaveable` (keyed by coordinate). With no report, the library section is left out.
+- Licence texts render one `Text` per paragraph (`LicenceText`), so TalkBack reads them paragraph by paragraph rather than as one 9 KB node.
+- **Strings** (one contiguous block after `about_oss`): `licences_libraries_heading`, `licences_pieces_heading`, `licences_library_detail` (`%1$s · version %2$s`) and `licences_library_licence` (`Licence: %1$s`). The dialog's dismiss button reuses `action_ok`, and the row click label reuses `about_view_licence`.
+
+### Files touched
+`build.gradle.kts`, `app/build.gradle.kts`, `app/src/main/kotlin/chess/app/ui/about/{AboutScreen,LicencesScreen}.kt`, `app/src/main/kotlin/chess/app/ui/about/{OpenSourceLicences,LicenceComponents}.kt` (new), `app/src/main/res/raw/{cburnett_bsd,licence_apache_2_0}.txt` (new), `app/src/main/res/drawable/ic_chevron_right.xml` (new), `app/src/main/res/values/strings.xml`, `app/src/test/kotlin/chess/app/ui/about/{AboutScreenTest,LicencesScreenTest,OpenSourceLicencesTest,LicenceAssertions}.kt` (new), `app/src/test/kotlin/chess/app/ResourcesTest.kt`, this log. Nothing under `ui/game/`, `engine/` or `nav/` changed.
+
+### Tests added (written first, seen failing)
+**Red:** `compileDebugUnitTestKotlin` failed (`Unresolved reference 'OpenSourceLicences'`, `'readRawText'`, `'licences_library_detail'`; `No parameter with name 'licencesAvailable'` / `'libraries'`). All 21 new tests passed on the first green run.
+
+**Mutation check:** I made two deliberate mutations, then reverted them. Changing `about_version` back to `Version %1$s` failed both version tests. Adding a 16 dp start inset to `LinkRow` failed `openSourceLicencesLinesUpWithTheColumnText`.
+
+- `AboutScreenTest` (8):
+  - the name, plus the version built from `BuildConfig` name and code
+  - the `about_version` format gives "Version 1.0.0 (1)"
+  - the Privacy heading and body
+  - the Credits heading and the Cburnett attribution
+  - **View licence** shows every paragraph of the BSD notice, and **OK** closes it
+  - the **Open-source licences** row is clickable and calls `onLicences`, and is hidden when `licencesAvailable = false`
+  - the row's text starts at the same x as "Credits"
+- `LicencesScreenTest` (6):
+  - every library in the bundled report has exactly one clickable row
+  - the material3 row shows its name, coordinates and version, and "Apache License 2.0"
+  - tapping a library shows `Licence: Apache License 2.0` and every paragraph of the Apache text, and **OK** closes it
+  - the Chess pieces heading and the full notice are displayed
+  - the raw notice equals the code block in `docs/licences/pieces-cburnett.md`, including all three clauses and the disclaimer
+  - with no report, the "Libraries" section is gone and the notice is still shown
+- `OpenSourceLicencesTest` (7):
+  - parsing handles SPDX and unknown licences and a missing POM name, and sorts the result
+  - a missing report reads as null, and so does a malformed one
+  - the bundled report lists sample direct and transitive runtime libraries (material3, activity-compose, navigation-compose, core-splashscreen, kotlin-stdlib, coroutines-android) and no first-party `engine`
+  - **every licence in the bundled report is on the allow-list and has a bundled text.** This fails if an MIT or BSD library arrives without its text.
+  - the Apache text is complete (title, sections 1 to 9, the end marker)
+  - CRLF is normalised
+- `ResourcesTest`: `ic_chevron_right` inflates as a `VectorDrawable`.
+
+### Commands run
+- Baseline, before any code change: `./gradlew :engine:test :app:testDebugUnitTest` → BUILD SUCCESSFUL, engine 198 tests, app 100 tests.
+- `./gradlew :app:licensee` → BUILD SUCCESSFUL (`licenseeAndroidDebug` and `licenseeAndroidRelease`).
+- **Negative run (allow-list proof).** I temporarily added `implementation("org.mariadb.jdbc:mariadb-java-client:3.5.1")` (LGPL) and `implementation("mysql:mysql-connector-java:8.0.33")` (GPL-2.0 with the FOSS exception), then ran `./gradlew :app:licenseeAndroidRelease :app:assembleDebug --continue`.
+  - Result: **BUILD FAILED**. `licenseeAndroidDebug` and `licenseeAndroidRelease` both failed with `SPDX identifier 'LGPL-2.1-or-later' is NOT allowed`, `Unknown license name 'The GNU General Public License, v2 with Universal FOSS Exception, v1.0' with no URL is NOT allowed` and `Unknown license URL 'https://raw.github.com/Waffle/waffle/master/LICENSE' is NOT allowed`.
+  - `assembleDebug` therefore fails too. The two lines were removed afterwards, and the diff of `app/build.gradle.kts` was checked.
+- GATE: `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:licensee` → **BUILD SUCCESSFUL**.
+  - `:engine:test`: 198 tests, 0 failures.
+  - `:app:testDebugUnitTest`: 121 tests, 0 failures, 0 skipped (16 suites; 21 new).
+  - Lint: 0 errors, 86 warnings: 85 `UnusedResources` (pre-existing copy-deck keys; none from T-26) and `OldTargetApi` (deliberate).
+- `./gradlew :app:assembleRelease`. In `app-release-unsigned.apk`, `assets/app/cash/licensee/artifacts.json` has 107 entries and is identical to `app/build/reports/licensee/androidRelease/artifacts.json`: no debug-only tooling. Both licence texts are in the APK (under shortened resource paths). The debug APK has the asset and both `res/raw` files.
+- **Visual check without an emulator.** A throwaway Robolectric native-graphics test (360 × 640 dp, xhdpi) captured About (light and dark), the About licence dialog, Licences (top in dark, and the end of the list with the Chess pieces heading) and a dialog with the Apache text. The row is aligned, the chevron renders, and long coordinates wrap. Robolectric could not capture the library dialog opened from the far-scrolled list ("Failed to capture a node to bitmap"); the same dialog rendered fine on its own. The test was deleted, not committed.
+
+### Deviations from the plan
+- **Task names.** licensee 1.14.1 names the tasks `licenseeAndroidDebug` / `licenseeAndroidRelease` (aggregate `licensee`), not `licenseeDebug` as the plan says.
+- **View licence opens a dialog on About** with the Cburnett notice, instead of navigating to S7b and making the user scroll past about 110 libraries. The notice is still in full at the end of S7b, as designed. No navigation code changed.
+- **Each library opens its text in a dialog**, not a new route. The design treats dialogs as screen state, so `Routes.kt` and `ChessNavHost.kt` are untouched (T-15 is working in parallel).
+- **Bundled Apache-2.0 text.** The design says each library opens "its full text". The licensee report has only the SPDX id and URL, and the app has no internet, so the Apache-2.0 text ships in `res/raw`. A test requires a bundled text for every licence in the report.
+- **4 extra strings** (headings, the detail line and the licence line), which design §4.10 doesn't list.
+
+### Follow-ups
+- T-29: translate the 4 new strings and `about_version`. The `res/raw` licence texts stay in English.
+- T-27 / release checklist: "Open-source licences" is present in the release build and lists the libraries (design §4.9 QA note). Re-check the allow-list result whenever a dependency is added; MIT or BSD libraries also need their own copyright text bundled (`OpenSourceLicences.textFor` plus a `res/raw` file), which `OpenSourceLicencesTest` enforces.
+- Optional: register a `licenseeDebug` alias if scripts or docs must keep the plan's task name.

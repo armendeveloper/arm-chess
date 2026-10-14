@@ -182,11 +182,20 @@
 
     <!-- S7 About and S7b Licences -->
     <string name="about_title">About</string>
-    <string name="about_version">Version %1$s</string>
+    <!-- %1$s is the version name ("1.0.0"), %2$d the version code ("1"). -->
+    <string name="about_version">Version %1$s (%2$d)</string>
     <string name="about_privacy_heading">Privacy</string>
     <string name="about_privacy_body">This app works fully offline. It has no internet access and collects no data. Your games and stats stay on this device.</string>
     <string name="about_credits_heading">Credits</string>
     <string name="about_pieces">Chess pieces by Colin M.L. Burnett (Cburnett), used under the BSD 3-clause licence.</string>
     <string name="about_view_licence">View licence</string>
     <string name="about_oss">Open-source licences</string>
+    <!-- S7b sections (T-26). The licence texts themselves are legal documents and stay in English:
+         they are res/raw files, not strings. Library and licence names come from the build. -->
+    <string name="licences_libraries_heading">Libraries</string>
+    <string name="licences_pieces_heading">Chess pieces</string>
+    <!-- One library row: %1$s is the Maven coordinate ("androidx.core:core"), %2$s its version ("1.19.1"). -->
+    <string name="licences_library_detail">%1$s · version %2$s</string>
+    <!-- Licence dialog: %1$s is the licence name ("Apache License 2.0"). -->
+    <string name="licences_library_licence">Licence: %1$s</string>
 </resources>
