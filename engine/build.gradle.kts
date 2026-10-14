@@ -25,7 +25,7 @@ dependencies {
 // The perft gate (design §4.2): `test` runs the gate depths; the release depths are tagged with the
 // JUnit 4 category chess.engine.PerftDeep and run only by `perftDeep`.
 tasks.test {
-    useJUnit { excludeCategories("chess.engine.PerftDeep") }
+    useJUnit { excludeCategories("chess.engine.PerftDeep", "chess.engine.SearchBench") }
 }
 
 val perftDeep by tasks.registering(Test::class) {
@@ -36,6 +36,19 @@ val perftDeep by tasks.registering(Test::class) {
     useJUnit { includeCategories("chess.engine.PerftDeep") }
     shouldRunAfter(tasks.test)
     // A release check and a timing record: always run it, never take it from the build cache.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+// Search speed at level 4's node budget (T-8); prints nodes per second for the plan's Results table.
+val searchBench by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Measures JVM search speed (nodes per second) at level 4's node budget. Takes about 10 seconds."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnit { includeCategories("chess.engine.SearchBench") }
+    testLogging { showStandardStreams = true }
+    shouldRunAfter(tasks.test)
     outputs.upToDateWhen { false }
     outputs.cacheIf { false }
 }
