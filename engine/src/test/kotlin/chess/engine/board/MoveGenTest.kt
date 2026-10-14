@@ -129,6 +129,147 @@ class MoveGenTest {
         assertEquals(setOf("a1a2", "a1b1"), legalUcis("4k2b/8/8/8/8/8/1N6/K7 w - - 0 1"))
     }
 
+    // Castling.
+
+    private val castlingBase = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"
+
+    private fun castles(fen: String): Set<String> =
+        MoveGen.legalMoves(Fen.parse(fen)).filter { it.isCastle }.map { it.uci() }.toSet()
+
+    @Test
+    fun bothSidesCastleOnBothWingsAsKingMovesWithTheCastleFlag() {
+        assertEquals(setOf("e1g1", "e1c1"), castles(castlingBase))
+        assertEquals(Move.CASTLE, legalMove(castlingBase, "e1g1").flags)
+        assertEquals(Move.CASTLE, legalMove(castlingBase, "e1c1").flags)
+        assertEquals(setOf("e8g8", "e8c8"), castles("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1"))
+    }
+
+    @Test
+    fun castlingNeedsTheRight() {
+        assertEquals(setOf("e1c1"), castles("r3k2r/8/8/8/8/8/8/R3K2R w Qkq - 0 1"))
+        assertEquals(setOf("e1g1"), castles("r3k2r/8/8/8/8/8/8/R3K2R w Kkq - 0 1"))
+        assertEquals(emptySet(), castles("r3k2r/8/8/8/8/8/8/R3K2R w kq - 0 1"))
+        assertEquals(setOf("e8g8"), castles("r3k2r/8/8/8/8/8/8/R3K2R b KQk - 0 1"))
+    }
+
+    @Test
+    fun castlingNeedsEmptySquaresBetweenKingAndRook() {
+        assertEquals(setOf("e1c1"), castles("4k3/8/8/8/8/8/8/R3K1NR w KQ - 0 1"), "knight on g1")
+        assertEquals(setOf("e1c1"), castles("4k3/8/8/8/8/8/8/R3KB1R w KQ - 0 1"), "bishop on f1")
+        assertEquals(setOf("e1g1"), castles("4k3/8/8/8/8/8/8/R2QK2R w KQ - 0 1"), "queen on d1")
+        assertEquals(setOf("e1g1"), castles("4k3/8/8/8/8/8/8/R1B1K2R w KQ - 0 1"), "bishop on c1")
+        assertEquals(setOf("e1g1"), castles("4k3/8/8/8/8/8/8/RN2K2R w KQ - 0 1"), "knight on b1")
+        assertEquals(setOf("e1g1"), castles("4k3/8/8/8/8/8/8/Rn2K2R w KQ - 0 1"), "enemy knight on b1")
+    }
+
+    @Test
+    fun noCastlingOutOfCheck() {
+        assertEquals(emptySet(), castles("7k/8/8/8/4r3/8/8/R3K2R w KQ - 0 1"))
+    }
+
+    @Test
+    fun noCastlingThroughAnAttackedSquare() {
+        assertEquals(setOf("e1c1"), castles("7k/8/8/8/5r2/8/8/R3K2R w KQ - 0 1"), "f1 attacked")
+        assertEquals(setOf("e1g1"), castles("7k/8/8/8/3r4/8/8/R3K2R w KQ - 0 1"), "d1 attacked")
+        assertEquals(setOf("e8c8"), castles("r3k2r/8/8/8/8/8/8/5RK1 b kq - 0 1"), "f8 attacked")
+    }
+
+    @Test
+    fun noCastlingIntoCheck() {
+        assertEquals(setOf("e1c1"), castles("7k/8/8/8/6r1/8/8/R3K2R w KQ - 0 1"), "g1 attacked")
+        assertEquals(setOf("e1g1"), castles("7k/8/8/8/2r5/8/8/R3K2R w KQ - 0 1"), "c1 attacked")
+    }
+
+    @Test
+    fun queensideCastlingIsAllowedWhenOnlyTheRookCrossesAnAttackedSquare() {
+        assertEquals(setOf("e1g1", "e1c1"), castles("7k/8/8/8/1r6/8/8/R3K2R w KQ - 0 1"), "b1 attacked")
+        assertEquals(setOf("e1g1", "e1c1"), castles("7k/8/8/8/8/8/8/R3K2R w KQ - 0 1"))
+    }
+
+    @Test
+    fun castlingIsGeneratedWhenTheRookIsAttacked() {
+        assertEquals(setOf("e1g1", "e1c1"), castles("7k/8/8/8/7r/8/8/R3K2R w KQ - 0 1"), "h1 attacked")
+    }
+
+    // En passant.
+
+    @Test
+    fun enPassantCapturesOntoTheTargetSquareWithBothFlags() {
+        val fen = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"
+        assertEquals(setOf("e5e6", "e5d6"), legalUcisFrom(fen, "e5"))
+        assertEquals(Move.EN_PASSANT or Move.CAPTURE, legalMove(fen, "e5d6").flags)
+        assertEquals(setOf("e5e6"), legalUcisFrom("4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1", "e5"), "no target square")
+    }
+
+    @Test
+    fun enPassantFromBothSidesAndForBlack() {
+        val white = "4k3/8/8/2PpP3/8/8/8/4K3 w - d6 0 1"
+        assertTrue("c5d6" in legalUcis(white) && "e5d6" in legalUcis(white))
+        val black = "4k3/8/8/8/3pPp2/8/8/4K3 b - e3 0 1"
+        assertEquals(Move.EN_PASSANT or Move.CAPTURE, legalMove(black, "d4e3").flags)
+        assertEquals(Move.EN_PASSANT or Move.CAPTURE, legalMove(black, "f4e3").flags)
+    }
+
+    @Test
+    fun enPassantThatExposesTheKingAlongTheRankIsIllegal() {
+        // Position 3 after 1.Rb1 c5: bxc6 would empty both b5 and c5 and open the h5 rook onto a5.
+        val white = "8/8/3p4/KPp4r/5p1k/8/4P1P1/1R6 w - c6 0 2"
+        assertEquals(setOf("b5b6"), legalUcisFrom(white, "b5"))
+        val pseudo = IntArray(MoveGen.MAX_MOVES)
+        val count = MoveGen.generatePseudoLegal(Fen.parse(white), pseudo)
+        assertTrue((0 until count).any { Move(pseudo[it]).uci() == "b5c6" }, "the capture is pseudo-legal")
+
+        // Position 3 after 1.e4: fxe3 would open the b4 rook onto the king on h4.
+        val black = "8/2p5/3p4/KP5r/1R2Pp1k/8/6P1/8 b - e3 0 1"
+        assertEquals(setOf("f4f3"), legalUcisFrom(black, "f4"))
+    }
+
+    @Test
+    fun enPassantThatCapturesTheCheckingPawnIsLegal() {
+        // 1.d4+ checks the king on e5; exd3 removes the checker.
+        assertTrue("e4d3" in legalUcis("8/8/8/4k3/3Pp3/8/8/4K3 b - d3 0 1"))
+    }
+
+    @Test
+    fun diagonallyPinnedPawnMayCaptureEnPassantOnlyAlongThePin() {
+        // Black bishop h8 pins the e5 pawn to the king on a1; d6 is off the a1-h8 diagonal.
+        assertEquals(emptySet(), legalUcisFrom("4k2b/8/8/3pP3/8/8/8/K7 w - d6 0 1", "e5"))
+        // Black bishop b8 pins the e5 pawn to the king on h2; d6 is on the b8-h2 diagonal.
+        assertEquals(setOf("e5d6"), legalUcisFrom("1b2k3/8/8/3pP3/8/8/7K/8 w - d6 0 1", "e5"))
+    }
+
+    // Promotion.
+
+    @Test
+    fun pushOntoTheLastRankBecomesFourPromotions() {
+        assertEquals(setOf("a7a8q", "a7a8r", "a7a8b", "a7a8n"), legalUcisFrom("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7"))
+        assertEquals(setOf("h2h1q", "h2h1r", "h2h1b", "h2h1n"), legalUcisFrom("4k3/8/8/8/8/8/7p/K7 b - - 0 1", "h2"))
+        val queen = legalMove("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7a8q")
+        assertEquals(PieceType.QUEEN, queen.promotionType)
+        assertEquals(0, queen.flags)
+    }
+
+    @Test
+    fun captureOntoTheLastRankBecomesFourCapturePromotions() {
+        val fen = "nr2k3/P7/8/8/8/8/8/4K3 w - - 0 1"
+        assertEquals(setOf("a7b8q", "a7b8r", "a7b8b", "a7b8n"), legalUcisFrom(fen, "a7"), "a8 is blocked")
+        for (uci in listOf("a7b8q", "a7b8r", "a7b8b", "a7b8n")) {
+            assertEquals(Move.CAPTURE, legalMove(fen, uci).flags, uci)
+        }
+    }
+
+    @Test
+    fun noPawnMoveOntoTheLastRankIsGeneratedWithoutAPromotion() {
+        for (fen in listOf("1r2k3/P7/8/8/8/8/8/4K3 w - - 0 1", "4k3/8/8/8/8/8/6p1/4K2R b - - 0 1")) {
+            val board = Fen.parse(fen)
+            val buffer = IntArray(MoveGen.MAX_MOVES)
+            val count = MoveGen.generatePseudoLegal(board, buffer)
+            val pawnMoves = (0 until count).map { Move(buffer[it]) }.filter { Piece.typeOf(board.pieceAt(it.from)) == Piece.PAWN }
+            assertEquals(8, pawnMoves.size, fen)
+            assertTrue(pawnMoves.all { it.isPromotion }, fen)
+        }
+    }
+
     @Test
     fun generationDoesNotChangeTheBoard() {
         val board = Fen.parse("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -")

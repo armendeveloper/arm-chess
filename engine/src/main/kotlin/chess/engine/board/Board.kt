@@ -71,19 +71,24 @@ internal class Board {
      * validated, because this is the search's hot path. Legality (not leaving the own king in
      * check) is the caller's business: [MoveGen.generateLegal] makes, tests and unmakes.
      *
-     * Updates the side to move, the en passant square (set behind every double push), the halfmove
-     * clock (reset by pawn moves and captures) and the fullmove number (after Black's move).
+     * Special moves: castling (the king's move, flagged [Move.CASTLE]) also moves the rook; en
+     * passant removes the pawn behind the target square; a promotion puts the promoted piece on the
+     * target square instead of the pawn.
      *
-     * @throws UnsupportedOperationException for castling, en passant and promotion, which T-5 adds.
+     * Updates the side to move, the castling rights (lost when the king or a rook leaves its home
+     * square, or a rook is captured on it), the en passant square (set behind every double push),
+     * the halfmove clock (reset by pawn moves and captures) and the fullmove number (after Black's
+     * move).
      */
     fun make(move: Move) {
-        if (move.bits and (Move.CASTLE or Move.EN_PASSANT) != 0 || move.isPromotion) {
-            throw UnsupportedOperationException("Castling, en passant and promotion are not supported yet: ${move.uci()}")
-        }
-        val from88 = Square.to0x88(move.from)
-        val to88 = Square.to0x88(move.to)
+        val from = move.from
+        val to = move.to
+        val from88 = Square.to0x88(from)
+        val to88 = Square.to0x88(to)
         val piece = cells[from88]
-        val captured = cells[to88]
+        val us = sideToMove
+        val victim88 = if (move.isEnPassant) enPassantVictim88(to88, us) else to88
+        val captured = cells[victim88]
 
         if (undoCount * UNDO_STRIDE == undo.size) undo = undo.copyOf(undo.size * 2)
         val base = undoCount * UNDO_STRIDE
@@ -93,17 +98,20 @@ internal class Board {
         undo[base + 3] = halfmoveClock
         undoCount++
 
-        cells[to88] = piece
+        cells[victim88] = Piece.NONE
+        cells[to88] = if (move.isPromotion) Piece.of(us, move.promotion) else piece
         cells[from88] = Piece.NONE
         val type = Piece.typeOf(piece)
-        if (type == Piece.KING) kingSquares[sideToMove] = move.to
+        if (type == Piece.KING) {
+            kingSquares[us] = to
+            if (move.isCastle) moveCastlingRook(to88, toCastled = true)
+        }
 
-        // T-5: castling (the rook's move), en passant (remove the pawn behind the target square),
-        // promotion (replace the pawn) and castling-right updates go here.
-        epSquare = if (move.isDoublePush) (move.from + move.to) shr 1 else Square.NONE
+        castlingRights = castlingRights and CASTLING_MASK[from] and CASTLING_MASK[to]
+        epSquare = if (move.isDoublePush) (from + to) shr 1 else Square.NONE
         halfmoveClock = if (type == Piece.PAWN || captured != Piece.NONE) 0 else halfmoveClock + 1
-        if (sideToMove == Piece.BLACK) fullmoveNumber++
-        sideToMove = 1 - sideToMove
+        if (us == Piece.BLACK) fullmoveNumber++
+        sideToMove = 1 - us
     }
 
     /**
@@ -117,18 +125,44 @@ internal class Board {
         undoCount--
         val base = undoCount * UNDO_STRIDE
 
-        sideToMove = 1 - sideToMove
-        if (sideToMove == Piece.BLACK) fullmoveNumber--
+        val us = 1 - sideToMove
+        sideToMove = us
+        if (us == Piece.BLACK) fullmoveNumber--
         val from88 = Square.to0x88(move.from)
         val to88 = Square.to0x88(move.to)
-        val piece = cells[to88]
+        val piece = if (move.isPromotion) Piece.of(us, Piece.PAWN) else cells[to88]
         cells[from88] = piece
-        cells[to88] = undo[base]
-        if (Piece.typeOf(piece) == Piece.KING) kingSquares[sideToMove] = move.from
+        if (move.isEnPassant) {
+            cells[to88] = Piece.NONE
+            cells[enPassantVictim88(to88, us)] = undo[base]
+        } else {
+            cells[to88] = undo[base]
+        }
+        if (Piece.typeOf(piece) == Piece.KING) {
+            kingSquares[us] = move.from
+            if (move.isCastle) moveCastlingRook(to88, toCastled = false)
+        }
 
         castlingRights = undo[base + 1]
         epSquare = undo[base + 2]
         halfmoveClock = undo[base + 3]
+    }
+
+    /** The 0x88 square of the pawn an en passant capture by [us] onto [to88] removes: one rank behind. */
+    private fun enPassantVictim88(to88: Int, us: Int): Int = if (us == Piece.WHITE) to88 - 16 else to88 + 16
+
+    /**
+     * Moves the castling rook for a king that castled onto [kingTo88] (g- or c-file): from its corner
+     * to the square the king crossed when [toCastled], and back again otherwise.
+     */
+    private fun moveCastlingRook(kingTo88: Int, toCastled: Boolean) {
+        val kingside = (kingTo88 and 7) == 6
+        val corner88 = if (kingside) kingTo88 + 1 else kingTo88 - 2
+        val crossed88 = if (kingside) kingTo88 - 1 else kingTo88 + 1
+        val from88 = if (toCastled) corner88 else crossed88
+        val to88 = if (toCastled) crossed88 else corner88
+        cells[to88] = cells[from88]
+        cells[from88] = Piece.NONE
     }
 
     /** Empties the board, resets every field to its default and drops the undo history. */
@@ -196,5 +230,20 @@ internal class Board {
 
         /** Plenty for a search from any game position; long game replays grow the stack. */
         const val INITIAL_UNDO_PLIES = 256
+
+        /**
+         * Castling rights that survive a move from or to each square (0..63): a move touching a
+         * king or rook home square clears the rights that depend on it, every other square keeps
+         * them all. [make] ands the entries for both squares, which covers king moves, rook moves
+         * and rooks captured at home.
+         */
+        val CASTLING_MASK = IntArray(64) { CastlingRights.ALL }.also {
+            it[Square.A1] = CastlingRights.ALL and CastlingRights.WHITE_QUEENSIDE.inv()
+            it[Square.E1] = CastlingRights.ALL and (CastlingRights.WHITE_KINGSIDE or CastlingRights.WHITE_QUEENSIDE).inv()
+            it[Square.H1] = CastlingRights.ALL and CastlingRights.WHITE_KINGSIDE.inv()
+            it[Square.A8] = CastlingRights.ALL and CastlingRights.BLACK_QUEENSIDE.inv()
+            it[Square.E8] = CastlingRights.ALL and (CastlingRights.BLACK_KINGSIDE or CastlingRights.BLACK_QUEENSIDE).inv()
+            it[Square.H8] = CastlingRights.ALL and CastlingRights.BLACK_KINGSIDE.inv()
+        }
     }
 }
