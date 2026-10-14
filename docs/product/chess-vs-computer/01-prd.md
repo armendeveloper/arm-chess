@@ -359,3 +359,4 @@ Note: apps that target API 36 can't lock orientation on large screens, so landsc
 
 - **2026-10-14**: First draft. v1 scope is fixed to play vs computer (the user's decision). Pass-and-play, online play and puzzles are recorded as Non-goals. 13 stories (US-1 to US-9 Must, US-10 to US-13 Should) and 10 open questions with defaults.
 - **2026-10-14**: PRD approved by the user. All open questions resolved to their recommended defaults (OQ-1 self-written Kotlin engine; OQ-2 free, no ads; OQ-3 automatic draws; OQ-4 unlimited undo; OQ-5 minSdk 26 / targetSdk 36; OQ-7 Play Store only; OQ-8 both reach and portfolio; OQ-9 13+; OQ-10 hints in v1.1).
+- **2026-10-14**: Scope change requested by the user: add Armenian (hy) and Russian (ru) UI and TalkBack localization after the main build (plan T-29). This replaces the "English only" assumption.

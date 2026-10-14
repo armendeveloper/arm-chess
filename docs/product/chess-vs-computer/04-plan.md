@@ -676,3 +676,16 @@ flowchart LR
 - **H-3 Reference device:** still open. Needed before T-11.
 - **H-5 `allowBackup=false`:** approved.
 - **H-6 Repo:** the user asked for a **public GitHub repo** (account `armendeveloper`). T-1 runs `git init`. The orchestrator creates the remote and pushes after T-1 is green.
+
+## Scope change (2026-10-14, user): Armenian and Russian
+
+The user asked for **Armenian (`hy`) and Russian (`ru`)** in addition to English, to be added after the main build. This replaces the PRD assumption "English only".
+
+**Rules for every task from now on, so the translation pass is mechanical:**
+- All user-visible text goes in `res/values/strings.xml`: labels, dialogs, errors, content descriptions and TalkBack announcements. No hard-coded strings in Kotlin or Compose.
+- Use `<plurals>` for anything with a count. Russian has one/few/many/other forms and Armenian has one/other.
+- Build TalkBack move announcements from whole-sentence format strings with positional arguments (`%1$s`), never by joining words in code. Russian and Armenian need different word order and grammatical cases (e.g. "takes knight" uses the accusative case in Russian).
+- Format numbers and dates through the locale.
+- Nothing may assume Latin-script text width. Armenian and Russian strings are often 20–40% longer, so buttons and the result panel must wrap or scale at 200% font size.
+
+**T-29: Localization (hy, ru).** Runs after T-28 and before release. It translates `strings.xml` into `values-hy/` and `values-ru/`, sets per-app language support (`android:localeConfig` plus `res/xml/locales_config.xml`, so Android 13+ shows a per-app language picker in system settings), and adds an in-app language option if the design calls for one. It also localizes piece names in TalkBack announcements and checks layouts with pseudo-locales (`en-XA`, `ar-XB`) and real hy/ru at 200% font. The move-list notation (SAN) stays in the international letter form, K Q R B N. Open question for the user at T-29: show localized piece letters, such as Russian Кр Ф Л С К, in the move list?
