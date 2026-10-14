@@ -480,3 +480,107 @@ Red: compile errors (`Unresolved reference 'drawable'`) before the resources exi
 - T-26: S7 shows `about_pieces`, and S7b shows the BSD notice from `docs/licences/pieces-cburnett.md` (the binary must carry the full text: clause 2).
 - T-12 / merge: keep `ic_launcher_background` (#FFDCC3) in sync with `PrimaryContainerLight` if the theme colours change.
 - T-14: `PieceArt` maps pieces to `R.drawable.piece_{w,b}{k,q,r,b,n,p}`. Each drawable is 45 dp intrinsic; scale it to the square.
+
+
+## 2026-10-14 — T-6: Zobrist keys, immutable Position/Game, game status and all draw types
+
+**Stories:** US-5 (all end conditions), US-2 (replay for the save loader), US-10 (undo).
+
+### What changed and why
+- **Zobrist keys** (`board/Zobrist.kt`, new). One random 64-bit number per (piece, square), one for Black to move, one per castling-rights combination (the XOR of four per-right keys) and one per en passant file. They come from SplitMix64 with a fixed seed ("ARMCHESS"), so keys are the same on every run and device. `Zobrist.compute(board)` builds a key from scratch. Clocks are not hashed.
+- **`Board`** keeps `key` up to date in `make`/`unmake`:
+  - `make` XORs out the mover and any captured piece, XORs in the placed piece (the promoted piece for a promotion), and moves the castling rook's key. It swaps the old castling-rights key for the new one, flips the side key, and takes out the previous en passant file if one was hashed.
+  - `unmake` restores the key from the undo stack, which grew from 4 to 5 ints per ply (the hashed en passant file), plus a parallel `LongArray` for the key.
+  - **En passant (build-log follow-up from T-5).** The board still records the en passant square after every double push, as FEN does. The key includes the en passant file only when `Board.hasLegalEnPassant()` is true. That function finds a pawn beside the pawn that just double-pushed, plays the capture on the cells, tests its own king and restores the cells. So the rank-pin case (position 3, 1.e4 fxe3) is excluded, and a capture that removes a checking pawn counts. This is US-5's "same en passant capture availability". The test runs only after a double push, so the cost in `make` is small.
+  - `Board(undoPlies)` and `copy(undoPlies)` take the initial undo depth. `Position` snapshots use 1, so a stored position does not carry a 256-ply undo stack (about 7 KB).
+  - `equals`/`hashCode` now include the key, so every existing round-trip check also checks the key. `resetKey()` recomputes it after direct field writes; `Fen.parse` calls it. Other new members are `samePlacementAs` and `hasHashedEnPassant`.
+- **`Position`** (`rules/Position.kt`, public, immutable). It wraps a private `Board` that is never changed after construction; move generation runs on a copy, so a position can be read from several threads.
+  - `fromFen`/`toFen`, `START`/`START_FEN`, `sideToMove`, `castlingRights`, `enPassantSquare`, the clocks, `pieceAt`, `kingSquare`, `isCheck`, `legalMoves()` (lazy, cached, read-only), `isLegal`, `play(move)` (throws `IllegalMoveException`), `repetitionKey` and `samePositionAs`.
+  - **`fromFen` rejects a FEN where the side not to move is in check** (follow-up from T-3 and T-4), with a `FenException`. `Fen.parse` itself still accepts such FENs, for perft and board tests.
+  - `samePositionAs` compares placement, side to move, castling rights and the en passant square only when a legal capture exists. `repetitionKey` is the board's Zobrist key, used as a pre-filter. A hash collision can never end a game (design §4.3).
+  - `equals` is stricter than `samePositionAs`: every FEN field, clocks included.
+  - `internal toBoard()` gives the search (T-8) a mutable copy.
+- **`IllegalMoveException : IllegalArgumentException`** (public, in `Position.kt`).
+- **`GameStatus`** (`rules/GameStatus.kt`): a sealed interface. Its members are `Ongoing`, `Checkmate(winner: PieceColor)`, and the sealed sub-interface `Draw` with `Stalemate`, `InsufficientMaterial`, `ThreefoldRepetition` and `FiftyMoveRule`, plus `isOver`.
+  - These are reasons, not text: no user-visible English in the engine (scope change: hy/ru). The app maps them to strings in T-16.
+  - `GameStatus.of(positions)` (internal) evaluates in design §4.3 order: checkmate, stalemate, insufficient material, threefold, 50-move.
+- **`Draws`** (`rules/Draws.kt`, internal):
+  - `isInsufficientMaterial` covers exactly the PRD's four cases, with an overload on `Board` for the search.
+  - `isThreefoldRepetition` scans back only as far as the halfmove clock and only same-side-to-move positions. It counts `samePositionAs` matches, and the occurrences need not be consecutive.
+  - `isFiftyMoveRule` is `halfmoveClock >= 100`.
+  - Both draws are automatic (decision OQ-3).
+- **`Game`** (`rules/Game.kt`, public, immutable):
+  - `positions` (read-only, moves + 1 entries), `moves`, `startPosition`, `position` (current), `status` (lazy).
+  - `play(move)` throws `IllegalMoveException` for an illegal move and for any move once the game is over.
+  - `undo(plies = 1)` takes 0..moves; the status is recomputed.
+  - `legalMovesFrom(sq)` is empty once the game is over.
+  - `equals`/`hashCode` compare positions and moves.
+  - `Game.start(position = START)` and `Game.replay(startFen, ucis)`. `replay` throws `FenException` or `IllegalMoveException` (malformed, illegal, or after the end). It builds its lists in one pass, so replay is linear.
+
+### Files touched
+`engine/src/main/kotlin/chess/engine/board/{Board,Fen}.kt`, `engine/src/main/kotlin/chess/engine/board/Zobrist.kt` (new), `engine/src/main/kotlin/chess/engine/rules/{Position,Game,GameStatus,Draws}.kt` (new), `engine/src/test/kotlin/chess/engine/board/MakeUnmakeTest.kt`, `engine/src/test/kotlin/chess/engine/board/ZobristTest.kt` (new), `engine/src/test/kotlin/chess/engine/rules/{PositionTest,GameStatusTest,RepetitionTest,GameTest,RulesTestSupport}.kt` (new), this log. `app/` is not touched.
+
+### Tests added (written first, seen failing)
+Red: with the tests written and no implementation, `:engine:compileTestKotlin` failed with 458 errors (no `Zobrist`, `Board.key`, `Position`, `Game`, `GameStatus`). Green on the first full run after the implementation. All suites passed at once, so I checked that the tests can fail with temporary mutations, each reverted:
+- Hashing the raw FEN en passant square: 5 failures.
+- Treating a pseudo-legal en passant capture as legal: 2 failures (the rank-pin tests).
+- Dropping castling rights from the key and `samePositionAs`, and checking the 50-move rule before mate: 8 failures.
+- Dropping the castling rook from the incremental key, ignoring bishop square colour, and limiting the repetition window to 4 plies: 13 failures.
+
+`:engine:test` now runs **198 tests** (T-5: 127; +71).
+- `ZobristTest` (8):
+  - The key is deterministic, and the parsed key equals the from-scratch key for all 7 perft FENs. The empty board's key is 0.
+  - Ten variations of side, placement and each castling right all get different keys. Clocks are ignored.
+  - En passant: 1.e4 with no capturer leaves the file out; a capturer on d4 puts it in; the position 3 rank pin leaves it out; a capture that removes the checking pawn (1.d4+ exd3) puts it in.
+  - **The incremental key equals the from-scratch key after every move of 3 random 200-ply games (seeds 1–3), and after every unmake back to the start.**
+- `MakeUnmakeTest` (no new tests; the helper is stronger). `checkRoundTrips` now asserts incremental key == `Zobrist.compute` after every make and every unmake, and that unmake restores the key. That covers the depth-2 round trip through the 7 perft positions and the depth-3 one through the special-move positions. `Board.equals` now includes the key too.
+- `PositionTest` (15):
+  - The start position and its fields; `fromFen`/`toFen` round trip for the perft FENs; malformed FENs rejected.
+  - **The side not to move in check is rejected for both colours**; the same placements are accepted with the checked side to move.
+  - `play` returns a new position and leaves the original unchanged. It rejects an illegal move, a move without the generator's flags, and a pinned piece leaving its line. `isLegal`. `legalMoves()` is cached and read-only. `isCheck`. Equality covers every FEN field.
+  - `samePositionAs`/`repetitionKey`: clocks are ignored; side, castling and placement count; an ep square with no capturer, or only a pseudo-legal one, makes no difference; a legal ep capture does.
+- `GameStatusTest` (22):
+  - Checkmate: fool's mate (Black wins), back-rank mate (White wins), mate given in the start FEN, and a back-rank check with an escape (not mate).
+  - Stalemate: Q v K, K+P v K, and one reached by a move.
+  - Insufficient material: K v K; K+B v K and K+N v K for both colours; K+B v K+B with same-coloured bishops on dark (c1/f8) and light (d3/h1) squares.
+  - **Not insufficient material:** opposite-coloured bishops, K+N+N v K, K+P v K, two same-coloured bishops on one side, B v N, N v N, a rook, a queen, and same-coloured bishops plus a pawn. A capture that leaves K+B v K ends the game.
+  - **50-move rule:** ongoing at 98 and 99 halfmoves, a draw at exactly 100; a start FEN at 100 is drawn; a capture or pawn move on the 100th halfmove resets the clock.
+  - Precedence: **mate on the 100th halfmove wins**; stalemate on the 100th is stalemate; insufficient material comes before the 50-move rule. `isOver` and `Draw` membership are checked for every status.
+- `RepetitionTest` (9). Each sequence varies its squares per cycle, so only the position under test can reach three occurrences:
+  - The knight shuffle draws on the **third, non-consecutive** occurrence (plies 0, 4, 8). Twofold is not a draw. A third occurrence with Black to move (plies 1, 5, 9) counts.
+  - **No draw when only castling rights differ**: king walks, then a rook move that loses one right. The placement recurs at ply 8 without a draw; the draw comes at ply 12.
+  - **A raw FEN ep square with no legal capture repeats with later occurrences** (1.e4, draw at ply 9). **A legal ep capture makes the first occurrence different** (1.e4 h6 2.e5 d5: no draw at ply 12, draw at 16).
+  - Repetition in a game started from a FEN. Repetition before the 50-move rule when both happen on the same ply.
+- `GameTest` (17):
+  - New game; `play` appends and leaves the original unchanged; `play` rejects illegal moves and any move after the game ended.
+  - `legalMovesFrom`: own piece, empty square, opponent's piece, a piece with no moves, and empty after the end.
+  - **`undo(2)` after fool's mate restores the position, moves, positions and an ongoing status.** Undo after a threefold makes the game ongoing again. `undo()` defaults to 1, `undo(0)` returns the same game, and out-of-range values throw.
+  - `replay` matches `play`, and resolves castling, en passant and under-promotion from UCI. **It rejects an illegal move** (with the move in the message), malformed or empty UCI, a missing or extra promotion letter, moves after mate, and an invalid or side-not-to-move-in-check FEN.
+  - Game equality; the lists are read-only.
+  - **Replaying 2,000 plies takes < 50 ms.** The test builds a 2,000-ply game that never ends (seeded random moves that keep the status ongoing, pawn pushes when the clock reaches 90), then replays it 5 times and logs the times. Measured best: **7.0 ms** (runs 11.2 / 8.6 / 9.0 / 7.0 / 7.8 ms) in a plain `:engine:test`, and **9.2 ms** in the GATE run.
+
+### Commands run
+- Baseline: `./gradlew :engine:test` → BUILD SUCCESSFUL, 127 tests.
+- Red: `./gradlew :engine:test` → compilation FAILED (458 unresolved references), as expected.
+- `./gradlew :engine:test` → BUILD SUCCESSFUL, 198 tests, 0 failures.
+- Mutation runs (`./gradlew :engine:test`, with and without `--tests "chess.engine.rules.*" --tests "chess.engine.board.ZobristTest"`) → FAILED as listed above. Each mutation was reverted, and `grep -rn MUTATION engine/` finds nothing.
+- GATE: `./gradlew --rerun-tasks :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL** in 1 min 27 s, 61 tasks executed.
+  - `:engine:test`: 198 tests, 0 failures, 0 skipped. `PerftTest` took 0.86 s.
+  - `:app:testDebugUnitTest`: 26 tests, 0 failures.
+  - Lint: 0 errors, 88 warnings, the same set as T-5 (`UnusedResources`, `OldTargetApi`, `MissingApplicationIcon`, all in `:app`).
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+- `./gradlew :engine:perftDeep` → BUILD SUCCESSFUL, 7 tests, 0 failures. **31.3 s** in JUnit (T-5 run 2: 25.2 s), 43 s wall clock. Per test: 10.4 / 8.2 / 5.9 / 4.3 / 0.9 / 0.8 / 0.8 s. The extra time is the key update in `make` plus machine variance; the counts are unchanged.
+
+### Deviations from the plan
+- **`IllegalMoveException`** lives in `Position.kt`, and the test helpers in `RulesTestSupport.kt`; the plan lists neither.
+- **`Game.play` after the end** throws `IllegalMoveException`, not `IllegalStateException`, so that `replay` and the app have one exception to handle. Once a game has ended, no move is legal in it.
+- **`legalMoves()` is a function** (design §4.1); `isCheck` and `repetitionKey` are properties.
+- **UCI resolution in `replay`** matches `move.uci()` against the legal moves. `// TODO(T-7)` marks where `Uci.parse` will take over.
+- **`Fen.parse` still accepts** a FEN where the side not to move is in check. Only the public `Position.fromFen` rejects it, so internal perft and board tests that use such FENs keep working.
+- **`Draws.isInsufficientMaterial(board: Board)`** is added for T-8's in-search draw detection. It is not used yet.
+
+### Follow-ups
+- T-7: replace the UCI matching in `Game.replay` with `Uci.parse` (the `TODO(T-7)` marker).
+- T-8: build the search board from `Position.toBoard()`. Use `Board.key` (which already includes the legal-ep rule) for the TT and in-search repetition. Use the history's `repetitionKey`s back to the last irreversible move, and `Draws.isInsufficientMaterial(board)`.
+- T-16: map `GameStatus` (`Checkmate(winner)`, the four `Draw` reasons) to localized strings. The engine provides no text.
+- `perftDeep` now takes about 31 s here; still run it before each release.

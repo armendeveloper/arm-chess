@@ -11,8 +11,9 @@ class FenException(message: String) : IllegalArgumentException(message)
  * 8 files, exactly one king per side, no pawns on ranks 1 and 8, castling rights that match the
  * king and rook squares, an en passant square on the right rank behind a pawn that has just
  * double-pushed, and numeric clocks. The clocks may be omitted (4 fields), as in the Kiwipete perft
- * FEN; they then default to `0 1`. Check legality (the side not to move being in check) needs
- * attack detection and is added with `Position.fromFen` (T-6).
+ * FEN; they then default to `0 1`. The side not to move being in check is rejected by
+ * `Position.fromFen`, the public entry point; [parse] still accepts it (perft and board tests).
+ * The parsed board's Zobrist key is computed before it is returned.
  */
 internal object Fen {
     const val START: String = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -52,6 +53,7 @@ internal object Fen {
                 "Fullmove number must be a positive integer, found '$it'"
             }
         }
+        board.resetKey()
         return board
     }
 
