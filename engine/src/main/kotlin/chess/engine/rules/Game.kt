@@ -61,6 +61,13 @@ class Game private constructor(positions: List<Position>, moves: List<Move>) {
         return position.legalMoves().filter { it.from == sq }
     }
 
+    /**
+     * The moves in SAN (design §4.4), one entry per move, with piece [letters] (K Q R B N by default).
+     * Check and mate marks come from the stored positions, so nothing is replayed.
+     */
+    fun sanList(letters: SanLetters = SanLetters.INTERNATIONAL): List<String> =
+        moves.indices.map { San.format(positions[it], moves[it], positions[it + 1], letters) }
+
     /** Equal when both games have the same positions (every FEN field) and moves. */
     override fun equals(other: Any?): Boolean =
         this === other || (other is Game && moves == other.moves && positions == other.positions)
@@ -90,8 +97,7 @@ class Game private constructor(positions: List<Position>, moves: List<Move>) {
                 if (status.isOver) {
                     throw IllegalMoveException("Move ${index + 1} ($uci) played after the game ended ($status)")
                 }
-                // TODO(T-7): resolve through Uci.parse once it exists.
-                val move = position.legalMoves().firstOrNull { it.uci() == uci }
+                val move = Uci.parseOrNull(position, uci)
                     ?: throw IllegalMoveException("Move ${index + 1} ($uci) is not legal in ${position.toFen()}")
                 moves += move
                 positions += position.play(move)
