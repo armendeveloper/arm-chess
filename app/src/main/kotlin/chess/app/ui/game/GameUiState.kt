@@ -2,9 +2,64 @@ package chess.app.ui.game
 
 import androidx.compose.runtime.Immutable
 
-// Game screen UI state (tech design §6.3). T-14 adds the board part; T-15 adds `GameUiState` itself
-// and the `GameUiMapper` that builds a `BoardUi` from the engine's `Position`. Nothing here refers
-// to engine types, so the board can be previewed and tested without an engine.
+// Game screen UI state (tech design §6.3). T-14 added the board part; T-15 adds `GameUiState`
+// itself and `StatusUi`, filled from the engine's `Game` by `GameUiMapper`. Nothing here refers to
+// engine types, so the screen can be previewed and tested without an engine.
+
+/**
+ * Everything the Game screen shows (tech design §6.3), derived from the ViewModel's private engine
+ * `Game` by [GameUiMapper]. Later tasks add fields here rather than new flows:
+ * - T-16: `overlay` (the promotion picker) and `result` (the result panel)
+ * - T-17: a loading `phase`
+ * - T-20: `canUndo` / `canResign`; T-22: `sanMoves`; T-24: the structured `announcement`
+ *
+ * @property level the computer's level, 1–4.
+ * @property player the human's side; it is at the bottom of the board.
+ */
+@Immutable
+data class GameUiState(
+    val level: Int,
+    val player: Side,
+    val board: BoardUi,
+    val status: StatusUi,
+)
+
+/**
+ * The status row's state (design §4.3.4). Structured, not text: the row looks up the words in
+ * `strings.xml`, so the ViewModel stays free of strings and its tests compare data.
+ */
+sealed interface StatusUi {
+    /** The player's turn. */
+    data object YourMove : StatusUi
+
+    /** The player's turn, and the player's king is in check. */
+    data object Check : StatusUi
+
+    /** The computer's turn; [check] is true when the computer's king is in check. */
+    data class Thinking(val check: Boolean) : StatusUi
+
+    /** A transient hint after tapping an own piece that has no legal moves (2.5 s). */
+    data object NoLegalMoves : StatusUi
+
+    /** The computer failed to choose a move; the row offers **Try again** (design 4.3.8). */
+    data object EngineError : StatusUi
+
+    /**
+     * The game has ended. Until T-16's result panel replaces the controls, the row shows the
+     * result's title (design 4.3.7).
+     */
+    data class GameOver(val end: GameEnd) : StatusUi
+}
+
+/** How a game ended, from the player's point of view (design 4.3.7). Resignation arrives with T-20. */
+enum class GameEnd {
+    CheckmateWin,
+    CheckmateLoss,
+    Stalemate,
+    ThreefoldRepetition,
+    FiftyMoveRule,
+    InsufficientMaterial,
+}
 
 /** A side of the board. The player's side is drawn at the bottom. */
 enum class Side {
