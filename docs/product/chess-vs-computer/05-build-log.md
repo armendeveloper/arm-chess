@@ -584,3 +584,146 @@ Red: with the tests written and no implementation, `:engine:compileTestKotlin` f
 - T-8: build the search board from `Position.toBoard()`. Use `Board.key` (which already includes the legal-ep rule) for the TT and in-search repetition. Use the history's `repetitionKey`s back to the last irreversible move, and `Draws.isInsufficientMaterial(board)`.
 - T-16: map `GameStatus` (`Checkmate(winner)`, the four `Draw` reasons) to localized strings. The engine provides no text.
 - `perftDeep` now takes about 31 s here; still run it before each release.
+
+## 2026-10-14 — T-14: ChessBoard static render and 64 semantics nodes
+
+**Stories:** US-3 (cues, coordinates), US-8 (square descriptions), US-9 (square size). Design 02 §4.3.3, §5.3, §5.6–5.9, §6.2; tech design §6.3, §7, §8.1.
+
+### What changed and why
+- **UI model, no engine types** (`ui/game/GameUiState.kt`, the board part of tech design §6.3). The engine's public API is changing in T-6, which runs in parallel, so the board has its own small model that T-15's `GameUiMapper` fills from `Position`:
+  - `Side` (White/Black), `PieceKind`, `PieceUi(side, kind)`.
+  - `TargetKind` with six values, each with `isCapture`: `Move`, `Castling`, `Promotion` (dots) and `Capture`, `EnPassant`, `CapturePromotion` (rings). Each value maps to exactly one §5.3 target phrase.
+  - `BoardUi(pieces: List<PieceUi?> /*64, a1 = 0*/, player, selected?, targets: Map<Int, TargetKind>, lastMove: LastMoveUi?, checkSquare?, interactive)`. `init` validates 64 squares and every cue square. `cell(sq)` / `cells` derive `CellUi(square, piece, selected, inCheck, target, lastMove: LastMoveRole?)`. `isOwnPiece(sq)` uses `player`.
+  - `SquareActionUi(to, kind, captured?)`: the input for custom-action labels that T-24 puts on squares.
+  - `Squares`: `of`, `file`, `rank`, `name`, `parse`, `fileName`, `rankName`, with the engine's numbering (a1 = 0, h8 = 63).
+  - The tech design's `whiteAtBottom` is replaced by `player`: the player is always at the bottom, and the same field decides which pieces are "own" for click labels.
+- **`ChessBoard(board, onSquareClick: (Int) -> Unit, modifier)`** (`ui/game/board/ChessBoard.kt`).
+  - A custom `Layout` takes the largest square that fits, rounded down to whole pixels per square, and centres it.
+  - One `drawBehind` runs the drawing plan. One `pointerInput` (`detectTapGestures`) maps the tap to a square with `squareAtOffset`. It reports the square only while `interactive`; the ViewModel decides what a tap means (T-15). T-25 replaces the detector with the 8 dp tap-or-drag handler.
+  - 64 transparent `Box`es are emitted in reading order and placed on the grid.
+  - `onSquareClick` is the seam for T-15 (`{ vm.onAction(SquareTap(it)) }`). The tech design's `onAction: (GameAction)` waits for `GameAction` in T-15.
+- **Drawing plan** (`BoardDrawing.kt`). `boardMarks(board)` is a pure list of `BoardMark`s, in the §4.3.3 layer order:
+  - `SquareFill(light, lastMove)`
+  - `CheckTint`
+  - `RankLabel` / `FileLabel`: rank digits top-left on the leftmost visual file, file letters bottom-right on the bottom visual rank; the colour follows the square shade
+  - `LastMoveCorner`
+  - `PieceMark`
+  - `SelectedBorder`
+  - `MoveDot` / `CaptureRing`
+  - `CheckBadge`
+
+  `DrawScope.drawBoard` only executes the list, so the JVM tests pin what is drawn and where. The orientation helpers are `squareAt`, `visualRow`, `visualCol`, `visualOrder` and `squareAtOffset`.
+  - Cue details per §4.3.3 and §6.2. Every ink and check cue has the 1.5 dp white halo:
+    - the selected border has its halo inside
+    - dots have a halo disc
+    - rings have a wider white ring underneath, which gives a halo on both edges
+    - the badge is a red disc with a white "+" and a halo
+    - the check tint is a radial gradient from 55% to 0% at 70% of the half-square
+    - the last-move corner triangle has no halo
+  - Coordinates use `TextMeasurer` at `0.24 s` converted with `toSp()`, so they scale with the board and not the font setting (§5.9). They are Roboto Medium.
+- **Geometry tokens** (`ui/theme/BoardMetrics.kt`, the T-12 follow-up). `BoardMetrics.of(squarePx, density)` resolves the §6.2 table: dot, ring, strokes, halo, badge, glyph, corner, coordinate size and inset, with the dp minimums.
+- **`PieceArt`** (`PieceArt.kt`) is the only place that names `R.drawable.piece_*`. `piecePainters()` gives the 12 `VectorPainter`s, each scaled to the square.
+- **Semantics overlay** (`BoardSemantics.kt`).
+  - The container has `isTraversalGroup = true` and test tag `chess_board`, and no `collectionInfo` (§5.3).
+  - Each square uses `clearAndSetSemantics`: test tag `square_e4`, `contentDescription` from `SquareDescriber`, and `onClick(label)` only when `clickLabel` isn't null. The action calls `onSquareClick(square)`.
+  - The nodes have no pointer input.
+- **`SquareDescriber`** (`ui/a11y/SquareDescriber.kt`) over a `Strings` interface (`ui/a11y/Strings.kt`; `AndroidStrings(resources)` in production, built from `LocalResources`).
+  - `describe(cell)` implements the §5.3 grammar.
+  - `clickLabel(cell, player, interactive)` returns **select** for own pieces (even with no legal moves), **deselect** for the selected piece, **move here** or **capture** for targets, and null otherwise or when not interactive.
+  - `actionLabel(SquareActionUi)` returns the §5.3 custom-action labels: Move to f3 / Take knight on f6 / Take pawn en passant on d6 / Castle kingside or queenside / Move to e8 and promote / Take rook on f8 and promote.
+  - `spokenCoordinate()` is the one place to switch to "A 1" if QA needs it.
+- **Localisation (2026-10-14 scope change).** No English is assembled in code. The 43 new `a11y_*` strings have translator comments:
+  - `a11y_square` = `%1$s, %2$s` (coordinate, contents)
+  - each state is appended with `a11y_square_with_state` = `%1$s, %2$s`, so a translation controls the separator and order
+  - piece names are whole phrases per colour and piece (12), so Russian and Armenian can make the adjective agree with the noun
+  - each target kind is one phrase ("move available, castling")
+  - capture actions are one string per captured piece type ("Take knight on %1$s", ×5, plus ×4 "… and promote"), so Russian can use the accusative case
+  - coordinates stay Latin; they are notation
+- **Previews** with `BoardFixtures`, an internal FEN piece-placement reader with no rules:
+  - the start position as White
+  - selected king in check
+  - all cues as Black in the dark theme
+  - 24 dp squares
+
+### Files touched
+- New: `app/src/main/kotlin/chess/app/ui/game/GameUiState.kt`, `app/src/main/kotlin/chess/app/ui/game/board/{ChessBoard,BoardDrawing,BoardSemantics,PieceArt,BoardFixtures}.kt`, `app/src/main/kotlin/chess/app/ui/a11y/{Strings,SquareDescriber}.kt`, `app/src/main/kotlin/chess/app/ui/theme/BoardMetrics.kt`.
+- Changed: `app/src/main/res/values/strings.xml` (43 `a11y_*` strings).
+- Tests: `app/src/test/kotlin/chess/app/ui/a11y/SquareDescriberTest.kt`, `app/src/test/kotlin/chess/app/ui/game/BoardUiTest.kt`, `app/src/test/kotlin/chess/app/ui/game/board/{BoardDrawingTest,ChessBoardSemanticsTest,ChessBoardRenderTest}.kt`, `app/src/test/kotlin/chess/app/ui/theme/BoardMetricsTest.kt`.
+- This log.
+
+### Tests added (written first, seen failing)
+**Red:** the first run failed to compile (`Unresolved reference 'CellUi'`, `'SquareDescriber'`, `'AndroidStrings'`, …). On the first green run, one render test failed (the halo sample, explained below), and it was fixed in the test.
+
+**Mutation check (reverted):** three mutations together failed 7 tests:
+- not drawing the selected border
+- Black orientation computed as White
+- forwarding taps when not interactive
+
+- `SquareDescriberTest` (Robolectric, real resources, 26 tests):
+  - every §5.3 example verbatim
+  - last move from; plain move; capture-promotion
+  - the state-word order (selected → in check → target → last move)
+  - all 12 piece names
+  - click labels per rule, for both sides and for a non-interactive board
+  - every custom-action label, plus rejection of a capture without a captured piece
+- `BoardUiTest` (JVM, 8):
+  - square numbering and parsing, and invalid names
+  - the placement reader
+  - 64-square and cue-range validation
+  - cell derivation; own pieces; `isCapture`
+- `BoardDrawingTest` (JVM, 16):
+  - reading order for White (a8 … h1) and Black (h1 … a8)
+  - row/column round trip; touch → square, including the edges and off-board
+  - square shades (a1 dark); 32 pieces on their squares in both orientations
+  - coordinates on the a-file and rank 1 for White, the h-file and rank 8 for Black, coloured by square shade
+  - each cue type → its mark; no cues without cue state
+  - marks in the §4.3.3 layer order
+- `BoardMetricsTest` (JVM, 2): the §6.2 fractions on a 45 dp square, and the dp minimums on a 24 dp square at 2×.
+- `ChessBoardSemanticsTest` (Robolectric Compose, 11):
+  - 64 child nodes of the board in reading order for each orientation, with bounds checked row-major on screen
+  - `isTraversalGroup` set; no `CollectionInfo` or `CollectionItemInfo`
+  - "e1, white king, selected, in check" from the `kingInCheckSelected` fixture, plus neighbouring squares
+  - click labels (deselect, move here, capture, select) and no click action on enemy pieces, empty non-targets or last-move squares
+  - not interactive → no click actions at all, descriptions kept
+  - an accessibility click reports d1 and e2
+  - a touch reports e2/a8/d4 as White and d7/h1 as Black; a touch is ignored when not interactive
+  - nodes update when the board state changes
+- `ChessBoardRenderTest` (Robolectric `@GraphicsMode(NATIVE)`, xhdpi, 8). It samples pixels well inside each mark, with sample points taken from `BoardMetrics`:
+  - square shades
+  - a piece in the right cell for White and for Black
+  - last-move tint and the bottom-left corner
+  - the selected ink border with its white halo inside
+  - a dot vs a hollow ring
+  - the check badge (red disc, white "+") and the tint
+  - coordinates on a1 and h1, and none on d5
+
+  At mdpi the 1.5 px halo covers no whole pixel, so the class renders at xhdpi.
+
+### Commands run
+- Baseline GATE before any change: **BUILD SUCCESSFUL** (engine 127, app 29 tests).
+- GATE `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` after the change: **BUILD SUCCESSFUL** (1 m 48 s).
+  - `:engine:test`: 127 tests, 0 failures.
+  - `:app:testDebugUnitTest`: 100 tests, 0 failures, 0 skipped (13 suites; 71 new).
+  - Lint: 0 errors, 87 warnings. 86 are `UnusedResources`, all pre-existing copy-deck keys for screens that come later; none is a new `a11y_*` string. The other is `OldTargetApi` (deliberate).
+- **Visual check without an emulator.** A throwaway Robolectric native-graphics test rendered the four fixtures at xxhdpi:
+  - start as White
+  - king in check selected
+  - all cues as Black
+  - all cues at 24 dp squares
+
+  Orientation, coordinates, tint, corners, halos, rings over pieces and the check badge all match §4.3.3. The test was deleted, not committed.
+
+### Deviations from the plan
+- **`ChessBoard(board, onSquareClick, modifier)`** instead of `onAction`: `GameAction` arrives with T-15.
+- **`BoardUi.player`** instead of `whiteAtBottom` (same information; see above).
+- **Taps on a non-interactive board are dropped in the board.** No semantics click actions exist then either. The ViewModel still guards (T-15 test).
+- **Custom actions are not attached to squares yet.** `SquareDescriber.actionLabel` and its strings are done and tested; attaching them is T-24, as the plan's T-24 list says.
+- **Extra files:** `BoardFixtures.kt` (previews and tests) and `ui/theme/BoardMetrics.kt` (the geometry tokens the T-12 log deferred to T-14).
+- **No PR screenshot committed;** the render tests and the throwaway capture stand in for it.
+
+### Follow-ups
+- T-15: map `Position` → `BoardUi`. `TargetKind` needs castling (king's destination), en passant (destination square, ring) and promotion vs capture-promotion. Wire `onSquareClick` to `SquareTap`. Show the board in `GameScreen`; it is not on screen yet.
+- T-24: put `SquareDescriber.actionLabel(...)` custom actions and keyboard focus on `squareSemantics`, and draw the focus ring as a new `BoardMark` layer between the cues and the dragged piece.
+- T-25: replace `detectTapGestures` with the `BoardInput` tap-or-drag handler. Add drop-target and ghost marks.
+- T-29 translator note: the state phrases ("selected", "in check") follow a noun phrase whose gender depends on the piece. Russian may need neutral forms (e.g. "выбрано"), or the describer could pass the piece to gendered state strings.
+- QA (T-28): check how TalkBack says "a1". Switch `SquareDescriber.spokenCoordinate` if needed.
