@@ -584,3 +584,72 @@ Red: with the tests written and no implementation, `:engine:compileTestKotlin` f
 - T-8: build the search board from `Position.toBoard()`. Use `Board.key` (which already includes the legal-ep rule) for the TT and in-search repetition. Use the history's `repetitionKey`s back to the last irreversible move, and `Draws.isInsufficientMaterial(board)`.
 - T-16: map `GameStatus` (`Checkmate(winner)`, the four `Draw` reasons) to localized strings. The engine provides no text.
 - `perftDeep` now takes about 31 s here; still run it before each release.
+
+## 2026-10-14 — T-7: SAN and UCI notation
+
+**Stories:** US-11 (move list), US-8 (spoken moves), and the save format (ADR-5).
+
+### What changed and why
+- **`Uci`** (`rules/Uci.kt`, new, public object):
+  - `format(move)` gives `"e2e4"`, `"e7e8q"`. Castling is the king's move (`e1g1`), en passant is the pawn's move to the target square.
+  - `parse(position, text)` and `parseOrNull` resolve the text against the legal moves by from, to and promotion, so the castling, en passant, capture and double-push flags come from the move generator.
+  - The text is strict: 4 or 5 lowercase characters, with a `q`/`r`/`b`/`n` promotion letter exactly when the move promotes. `parse` throws `IllegalMoveException`.
+- **`Game.replay`** now resolves each move with `Uci.parseOrNull` (the `TODO(T-7)` from T-6), with the same error message. This compares three ints instead of building a UCI string for every legal move.
+- **`SanLetters`** (`rules/San.kt`, public data class): the five piece letters, which are injectable. `SanLetters.INTERNATIONAL` (K Q R B N) is the default everywhere.
+  - T-29 can pass localized letters (for example Russian Кр Ф Л С К) without touching the SAN logic.
+  - A letter may be several characters long. The parser tries the longest letters first, so "Кр" wins over "К".
+  - Letters must be non-empty, distinct, and free of whitespace and of the characters SAN uses (`a`–`h`, digits, `x = + # - . ! ?`), so the notation cannot become ambiguous.
+  - Castling stays `O-O`/`O-O-O` and squares stay `a1`–`h8` whatever the letters.
+- **`San`** (`rules/San.kt`, public object):
+  - `format(position, move, letters)` gives piece letters, disambiguation (file if that is enough, else rank, else both: `Nbd7`, `R1e2`, `Qh4xe1`), `x`, pawn captures with the from-file (`exd5`; en passant is `exd6` with no suffix), `=Q`, `O-O`/`O-O-O`, and `+` or `#` worked out from the resulting position.
+  - Disambiguation looks only at **legal** moves, so a pinned piece never adds a file or rank.
+  - `format` throws `IllegalMoveException` for a move that is not legal.
+  - The output is notation, not prose: the engine still has no user-visible English.
+- **SAN parser** `San.parse(position, text, letters)` / `parseOrNull`. The task asked for one; design §4.4 said v1 needs none (see Deviations).
+  - Accepted, beyond strict SAN: a missing `+`/`#` (and `+` on a mate), `0-0`/`0-0-0`, a promotion without `=` (`e8Q`), a missing `x` (`ed5`, `Ne5`), extra disambiguation (`Ng1e2`, `e2e4`), an `e.p.` suffix before or after the check mark, `!`/`?` annotations, and surrounding spaces.
+  - Rejected: anything that claims something false (an `x` that captures nothing, a `+`/`#`/`e.p.` that does not hold), ambiguity, a missing or impossible promotion piece (`e8`, `e8=K`, `Nf3=Q`), castling written as a king move (`Kg1`), a pawn "push" onto an occupied square (`d5` never means `exd5`), lowercase piece letters, `-` separators, and other malformed text.
+  - The `IllegalMoveException` message says why ("ambiguous", "not legal", "not check", "not mate", "malformed") and gives the FEN, for logs.
+- **`Game.sanList(letters = INTERNATIONAL)`**: one SAN string per move. It takes the check and mate marks from the stored positions, so nothing is replayed, and the legal-move lists it needs are cached in each `Position`.
+
+### Files touched
+`engine/src/main/kotlin/chess/engine/rules/{San,Uci}.kt` (new), `engine/src/main/kotlin/chess/engine/rules/Game.kt` (`replay` through `Uci`, plus `sanList`), `engine/src/test/kotlin/chess/engine/rules/{UciTest,SanTest,SanParseTest}.kt` (new), `engine/src/test/kotlin/chess/engine/rules/RulesTestSupport.kt` (`randomGame`/`randomGameOf` helpers), this log. `app/` and the board and search files are not touched; `Board` and `Position` are unchanged.
+
+### Tests added (written first, seen failing)
+Red: with the tests written and no implementation, `:engine:compileTestKotlin` failed with 81 errors (no `Uci`, `San`, `SanLetters`, `Game.sanList`). All suites passed on the first run after the implementation, so I checked that they can fail with temporary mutations, each reverted:
+- Never disambiguating by rank alone, always writing `+` for mate, and letting a king move parse as castling: 4 failures (the table, both games, and `rejectsIllegalMoves`).
+- Ignoring the promotion letter in `Uci.parseOrNull`: 7 failures (5 in `UciTest`, 2 in `GameTest` replay).
+
+`:engine:test` now runs **231 tests** (T-6: 198; +33).
+- `UciTest` (10):
+  - `format` for quiet moves, double pushes, captures, both castlings, en passant, and promotions.
+  - `parse` infers castling from the king move (and rejects it without the right), en passant (the captured pawn is removed), and all four promotions, pushing or capturing.
+  - It rejects malformed or illegal text: empty, short, uppercase, padded, `e2-e4`, `0000`, off-board, the other side's move, castling through pieces, a missing promotion, a `k`/`p`/uppercase promotion, and any move in a mated position. `parseOrNull` returns null for each.
+  - **Every legal move of the 7 perft FENs**, and every legal move at every ply of 20 random games, round-trips through `format`/`parse`.
+- `SanTest` (9):
+  - **A table of 38 cases**: `e4`, `e3`, `Nf3`, `Nc3`, `Nbd7`/`Nfd7`, `R1e2`/`R3e2`, `Rad1`/`Rhd1`, `N1f3`/`N5f3`, **three queens `Qh4xe1`/`Q1xe1`/`Qexe1`**, a pinned knight that adds no disambiguation (`Ne2`), `exd5`, `e5`, `Nxe5`, `Kxd2`, en passant `exd6` and `exd6+`, `e8=Q+`/`e8=R+`/`e8=B`/`e8=N`/`e8=N+`, `axb8=Q+`, `a8=Q`, **`bxa1=N#`**, `bxa1=Q`, `O-O` and `O-O-O` for both colours, `O-O-O+`, `Ra8+`, `Ra8#`, and a stalemating `Qb6` with no suffix. Each entry also parses back to its move.
+  - **Two published games**: the Opera Game (Morphy, Paris 1858, 17 moves) and the Immortal Game (Anderssen v Kieseritzky, London 1851, 23 moves). Each is replayed from UCI, and `sanList` equals the published PGN movetext token for token. Both end in `Checkmate(WHITE)`. The Immortal Game's SAN also parses back into the same `Game`.
+  - `sanList` equals `format` ply by ply, and is empty for a new game. `format` rejects an illegal move.
+  - **SAN→Move→SAN round trip**: every legal move has a distinct SAN that parses back to it, in the 7 perft FENs, at every ply of 30 random games from the start, and at every ply of 21 random games from the perft FENs.
+- `SanParseTest` (14): every tolerant form and every rejection listed above. Ambiguity is checked with two knights, two rooks on a file, and the three queens (`Qxe1`, `Qe1`, `Qhxe1`, `Q4xe1`). Also covered: the exception message; that `INTERNATIONAL` is K Q R B N; **Russian letters** (`Кf3`, `Фh4xe1`, `e8=Ф+`, `e8=К`, `Крd2`, `O-O`, a `sanList` from `e4` to `Сg4`, `Nf3` rejected, and a perft-position round trip); and that invalid letter sets are rejected.
+
+### Commands run
+- Setup: `local.properties` written with the double-backslash `sdk.dir` (checked with `od -c`). It is git-ignored.
+- Baseline: `./gradlew :engine:test` → BUILD SUCCESSFUL, 198 tests.
+- Red: `./gradlew :engine:compileTestKotlin` → FAILED, 81 errors, as expected.
+- `./gradlew :engine:test` → BUILD SUCCESSFUL, 231 tests, 0 failures. The mutation runs FAILED as listed above and were reverted.
+- GATE: `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL** in 2 min 41 s.
+  - `:engine:test`: 231 tests, 0 failures, 0 skipped. `SanTest` took 0.6 s.
+  - `:app:testDebugUnitTest`: 29 tests, 0 failures.
+  - Lint: 0 errors, 87 warnings (86 `UnusedResources` and 1 `OldTargetApi`, all in `:app`, which this task does not touch).
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+  - The T-6 replay timing test still passes with `Uci.parseOrNull`: 2,000 plies, best 5.8 ms in a plain `:engine:test` and 11.9 ms in the GATE run (limit 50 ms).
+
+### Deviations from the plan
+- **There is now a SAN parser**, which design §4.4 said v1 does not need. The task asked for one, for the tests and for later use (for example a PGN import or typed moves). The save format is still UCI (ADR-5).
+- **`SanLetters` is in `San.kt`**, and piece letters are injectable, so T-29 can choose localized letters without changing the engine.
+- **The plan's "known 20-move game"** is two published games instead, of 17 and 23 moves.
+- **`Uci.format` and `Uci.parseOrNull`** are added next to `Uci.parse`. `Move.uci()` stays, and `Uci.format` delegates to it.
+
+### Follow-ups
+- T-22: show `Game.sanList()` in the move list. Build the SAN speech (`SanSpeech.kt`) from `Move` and `Position` data (piece, capture, check), not by reading the SAN string aloud.
+- T-29: decide whether the move list uses localized letters. If it does, pass a `SanLetters` built from string resources to `Game.sanList` / `San.format`.
