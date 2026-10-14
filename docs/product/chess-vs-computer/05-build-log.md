@@ -281,3 +281,64 @@ Red: `compileTestKotlin` failed with `Unresolved reference 'Attacks'` (and `Move
   - Start position depth 5 should then give 4,865,609.
 - `MAX_MOVES = 256` is sized for legal plus pseudo-legal moves. T-5 adds promotions; no realistic position comes near it, but the search (T-8) should keep using it rather than a smaller buffer.
 - T-6: reject a FEN where the side not to move is in check (`Attacks.isInCheck(board, 1 - board.sideToMove)`).
+
+## 2026-10-14 — T-2: Emulator harness and first instrumented test
+
+**Stories:** enabler (US-2 process death, US-6 timing, release smoke). Unblocks every **[emulator]** task and T-11.
+
+### What changed and why
+- **AVD `chess36`** created from the already-installed `system-images;android-36.1;google_apis_playstore;x86_64` (decision H-2; nothing was installed with `sdkmanager`). Its own `config.ini` now has `hw.lcd.width=720`, `hw.lcd.height=1280`, `hw.lcd.density=320` (360 × 640 dp) and `hw.ramSize=2048`. `grainlab_test` was not touched.
+  - `avdmanager.bat create avd -n chess36 -k "system-images;android-36.1;google_apis_playstore;x86_64"` worked as-is from Git Bash. The quoted `;` path reaches the `.bat` as one argument, so the `/` fallback was not needed.
+  - `PlayStore.enabled` is set to `yes`. `avdmanager` writes `no` even for a Play image, and the plan picked the Play image so TalkBack can be installed later.
+- **Acceleration:** `emulator -accel-check` → `WHPX(10.0.26300) is installed and usable`. The boot log confirms "Windows Hypervisor Platform accelerator is operational". Emulator 37.2.12.0.
+- **`app/build.gradle.kts`:** `testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"`, plus these `androidTestImplementation` dependencies, all from the catalog:
+  - `ext-junit`
+  - `runner`
+  - `espresso-core` (see deviations)
+  - `uiautomator`
+  - the Compose BOM and `ui-test-junit4`
+
+  `ui-test-manifest` was already `debugImplementation`.
+- **`LaunchSmokeTest`** (`app/src/androidTest/kotlin/chess/app/`), using `v2.createAndroidComposeRule<MainActivity>()`:
+  - `debugBuildIsUnderTest`: the target package is `io.github.armendeveloper.armchess.debug`, the T-12 suffix.
+  - `activityLaunchesAndShowsAppName`: the activity is `RESUMED` past the splash, and "Arm Chess" is displayed.
+- **`scripts/emulator.md`:** the verified commands for this machine. It covers the prerequisite and acceleration checks, creating and configuring the AVD, booting headless and windowed, waiting for `sys.boot_completed`, running the connected tests (all, or one class), shutting down, PowerShell notes, and the Espresso known issue.
+
+### Files touched
+`app/build.gradle.kts`, `gradle/libs.versions.toml` (one version and one library: `espresso`), `app/src/androidTest/kotlin/chess/app/LaunchSmokeTest.kt` (new), `scripts/emulator.md` (new), and this log. Outside the repo: `~/.android/avd/chess36.ini` and `chess36.avd/` (new). Ignored: `local.properties`.
+
+### Tests added (written first, seen failing)
+- **Red, compile:** `:app:compileDebugAndroidTestKotlin` failed with `Unresolved reference 'junit4'`, `'test'`, `'createAndroidComposeRule'` and others, because there were no androidTest dependencies yet.
+- **Red, on device:** with the dependencies added, both tests failed on `chess36` with `NoSuchMethodException: android.hardware.input.InputManager.getInstance` from `Espresso.onIdle`. Fixed by the Espresso pin.
+- **Green:** 2 of 2 passed on `chess36`.
+- **Mutation check:** changing the expected text to "Arm Chesz" failed `activityLaunchesAndShowsAppName` on the device ("... contains 'Arm Chesz' ... is not displayed!"). Reverted.
+
+### Commands run
+- `emulator -accel-check` → WHPX usable.
+- `emulator -avd chess36 -no-window -no-snapshot-save -no-audio -no-boot-anim` (background), then `adb wait-for-device` and a `getprop sys.boot_completed` loop.
+  - **Cold boot to `boot_completed=1`: 66 s.**
+  - `wm size` → 720x1280; `wm density` → 320; `ro.build.version.sdk` → 36 (release 16).
+- `./gradlew :app:connectedDebugAndroidTest` → **BUILD SUCCESSFUL**, `chess36(AVD) - 16`, 2 tests, 0 failures. Run twice: after the fix, and again as the final run after the gate.
+- `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=chess.app.LaunchSmokeTest` → BUILD SUCCESSFUL, 2 tests. This checks the single-class command in the runbook.
+- GATE: `./gradlew :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL**.
+  - `:engine:test`: 94 tests, 0 failures.
+  - `:app:testDebugUnitTest`: 26 tests, 0 failures.
+  - Lint: 0 errors, 88 warnings, the same set as T-12: `MissingApplicationIcon`, `OldTargetApi` and 86 `UnusedResources`.
+- `adb -s emulator-5554 emu kill` → "OK: killing emulator, bye bye".
+  - Afterwards `adb devices` is empty and no `emulator.exe` or `qemu` process remains. The emulator's own `-kill … -sleep 20` watchdog exited by itself.
+  - The adb server was already running before this task and was left running.
+
+### Deviations from the plan
+- **The plan's steps 1–2 were replaced by the 2026-10-14 decisions.** Nothing was installed, and the image is `android-36.1`, not `android-36`.
+- **New catalog entry `espresso = "3.7.0"`** (`androidx-test-espresso-core`), used only by androidTest.
+  - Compose `ui-test-junit4` from BOM 2026.09.00 brings in `espresso-core:3.5.0` transitively. That version calls `InputManager.getInstance()`, which API 36.1 removed, so every Compose instrumented test fails in `Espresso.onIdle`.
+  - 3.7.0 is the latest stable release and belongs to the same AndroidX Test release as `runner` 1.7.0 and `core` 1.7.0, which are already in the catalog.
+  - Design §1.2 could list it.
+- **`PlayStore.enabled=yes`** in the AVD config. The plan did not mention it; see above.
+- **"Arm Chess" instead of "Chess"** in the smoke test, as the T-1 log asked.
+- **The windowed boot command is documented but was not run,** so no window was opened on the desktop. It is the headless command without `-no-window -no-audio -no-boot-anim`.
+
+### Follow-ups
+- Tasks marked **[emulator]**, and T-11, can now use `chess36`; see `scripts/emulator.md`.
+- Instrumented tests must keep the `espresso-core` pin until the Compose BOM brings in 3.7.0 or later itself. Remove it then.
+- T-27 (CI): an API 36.1 image on a Linux runner needs KVM; the `-no-window ... -no-boot-anim` command line from the runbook carries over.
