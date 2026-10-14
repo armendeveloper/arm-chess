@@ -4,30 +4,24 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import chess.app.nav.ChessNavHost
+import chess.app.ui.theme.ArmChessTheme
 
-/** Single activity. T-1 only shows the app name; T-12 replaces this with the theme and navigation host. */
+/**
+ * The single activity (design §6.1): splash, edge-to-edge, theme and the navigation host.
+ * Back is never overridden; Navigation Compose handles it, including predictive back.
+ */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        val splashScreen = installSplashScreen()
+        // Stub: T-17 keeps the splash up while the save loads, for at most 1.5 s (design §4.2).
+        splashScreen.setKeepOnScreenCondition { false }
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.headlineMedium,
-                        )
-                    }
-                }
+            ArmChessTheme {
+                ChessNavHost()
             }
         }
     }
