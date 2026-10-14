@@ -15,8 +15,9 @@ object CastlingRights {
  * snapshots (`Position`, T-6).
  *
  * Every accessor takes and returns 0..63 squares ([Square]); only the piece array is 0x88-indexed,
- * for move generation's ray and leap loops ([piece88]). Move generation, make/unmake with its
- * undo stack (T-4) and the Zobrist key (T-6) are added on top of these fields.
+ * for move generation's ray and leap loops ([piece88]). [make] and [unmake] update the board in
+ * place and keep what a move destroys on a growable undo stack, so the search does not allocate.
+ * The Zobrist key (T-6) is added on top of these fields.
  */
 internal class Board {
     /** Piece codes indexed by 0x88 square. Off-board slots always hold [Piece.NONE]. */
@@ -37,6 +38,16 @@ internal class Board {
     var halfmoveClock: Int = 0
     var fullmoveNumber: Int = 1
 
+    /**
+     * What [make] cannot recompute in [unmake], [UNDO_STRIDE] ints per made move: captured piece,
+     * castling rights, en passant square and halfmove clock. Grows by doubling when a long game
+     * outruns it; never part of [equals] or [copy].
+     */
+    private var undo = IntArray(INITIAL_UNDO_PLIES * UNDO_STRIDE)
+
+    /** Number of made moves not yet unmade. */
+    private var undoCount = 0
+
     fun pieceAt(sq: Int): Int = cells[Square.to0x88(sq)]
 
     /** Piece at a 0x88 index; [sq88] must be in 0..127. */
@@ -55,8 +66,74 @@ internal class Board {
         if (Piece.typeOf(piece) == Piece.KING) kingSquares[Piece.colorOf(piece)] = sq
     }
 
-    /** Empties the board and resets every field to its default. */
+    /**
+     * Plays [move], which must be pseudo-legal for this board (as produced by [MoveGen]). It is not
+     * validated, because this is the search's hot path. Legality (not leaving the own king in
+     * check) is the caller's business: [MoveGen.generateLegal] makes, tests and unmakes.
+     *
+     * Updates the side to move, the en passant square (set behind every double push), the halfmove
+     * clock (reset by pawn moves and captures) and the fullmove number (after Black's move).
+     *
+     * @throws UnsupportedOperationException for castling, en passant and promotion, which T-5 adds.
+     */
+    fun make(move: Move) {
+        if (move.bits and (Move.CASTLE or Move.EN_PASSANT) != 0 || move.isPromotion) {
+            throw UnsupportedOperationException("Castling, en passant and promotion are not supported yet: ${move.uci()}")
+        }
+        val from88 = Square.to0x88(move.from)
+        val to88 = Square.to0x88(move.to)
+        val piece = cells[from88]
+        val captured = cells[to88]
+
+        if (undoCount * UNDO_STRIDE == undo.size) undo = undo.copyOf(undo.size * 2)
+        val base = undoCount * UNDO_STRIDE
+        undo[base] = captured
+        undo[base + 1] = castlingRights
+        undo[base + 2] = epSquare
+        undo[base + 3] = halfmoveClock
+        undoCount++
+
+        cells[to88] = piece
+        cells[from88] = Piece.NONE
+        val type = Piece.typeOf(piece)
+        if (type == Piece.KING) kingSquares[sideToMove] = move.to
+
+        // T-5: castling (the rook's move), en passant (remove the pawn behind the target square),
+        // promotion (replace the pawn) and castling-right updates go here.
+        epSquare = if (move.isDoublePush) (move.from + move.to) shr 1 else Square.NONE
+        halfmoveClock = if (type == Piece.PAWN || captured != Piece.NONE) 0 else halfmoveClock + 1
+        if (sideToMove == Piece.BLACK) fullmoveNumber++
+        sideToMove = 1 - sideToMove
+    }
+
+    /**
+     * Takes back [move], which must be the last move [make] played and not yet unmade. Restores
+     * every field, so the board [equals] its state before [make].
+     *
+     * @throws IllegalStateException when no move is left to unmake.
+     */
+    fun unmake(move: Move) {
+        check(undoCount > 0) { "No move to unmake: ${move.uci()}" }
+        undoCount--
+        val base = undoCount * UNDO_STRIDE
+
+        sideToMove = 1 - sideToMove
+        if (sideToMove == Piece.BLACK) fullmoveNumber--
+        val from88 = Square.to0x88(move.from)
+        val to88 = Square.to0x88(move.to)
+        val piece = cells[to88]
+        cells[from88] = piece
+        cells[to88] = undo[base]
+        if (Piece.typeOf(piece) == Piece.KING) kingSquares[sideToMove] = move.from
+
+        castlingRights = undo[base + 1]
+        epSquare = undo[base + 2]
+        halfmoveClock = undo[base + 3]
+    }
+
+    /** Empties the board, resets every field to its default and drops the undo history. */
     fun clear() {
+        undoCount = 0
         cells.fill(Piece.NONE)
         kingSquares.fill(Square.NONE)
         sideToMove = Piece.WHITE
@@ -66,6 +143,7 @@ internal class Board {
         fullmoveNumber = 1
     }
 
+    /** A deep copy of the position. The copy starts with an empty undo history. */
     fun copy(): Board {
         val other = Board()
         cells.copyInto(other.cells)
@@ -111,5 +189,12 @@ internal class Board {
             append('\n')
         }
         append("  a b c d e f g h")
+    }
+
+    private companion object {
+        const val UNDO_STRIDE = 4
+
+        /** Plenty for a search from any game position; long game replays grow the stack. */
+        const val INITIAL_UNDO_PLIES = 256
     }
 }
