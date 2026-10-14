@@ -20,7 +20,11 @@ class MakeUnmakeTest {
     private fun play(board: Board, vararg ucis: String): List<Move> =
         ucis.map { uci -> move(board, uci).also { board.make(it) } }
 
-    /** Makes and unmakes every legal move down to [depth], checking the board after each unmake. */
+    /**
+     * Makes and unmakes every legal move down to [depth], checking the board after each unmake. After
+     * every make and every unmake, the incrementally updated Zobrist key must equal the key computed
+     * from scratch (`Board.equals` also compares the key, so the unmake check covers its restore).
+     */
     private fun checkRoundTrips(board: Board, depth: Int, fen: String): Int {
         if (depth == 0) return 0
         var checked = 0
@@ -28,9 +32,12 @@ class MakeUnmakeTest {
             val before = board.copy()
             board.make(move)
             assertNotEquals(before, board, "$fen: ${move.uci()} must change the board")
+            assertEquals(Zobrist.compute(board), board.key, "$fen: key after ${move.uci()}")
             checked += 1 + checkRoundTrips(board, depth - 1, fen)
             board.unmake(move)
             assertEquals(before, board, "$fen: unmake ${move.uci()} must restore every field")
+            assertEquals(before.key, board.key, "$fen: unmake ${move.uci()} must restore the key")
+            assertEquals(Zobrist.compute(board), board.key, "$fen: key after unmaking ${move.uci()}")
         }
         return checked
     }
