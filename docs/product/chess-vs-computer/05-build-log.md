@@ -190,3 +190,94 @@ New dependencies (all already pinned in the catalog, design §1.2):
 - T-18: the New game sheet replaces the direct Home → Game navigation.
 - T-14: board geometry tokens (§6.2) next to `BoardColors`.
 - T-26: the "Open-source licences" `ListItem` sits 16 dp further in than the column text (ListItem's own padding). Align it when building the real About screen.
+
+## 2026-10-14 — T-4: Move generation, make/unmake, legality and perft (start position)
+
+**Stories:** US-4.
+
+### What changed and why
+- `Attacks` (internal): `isAttacked(board, sq, by)` scans outward from the target square (pawn squares, knight and king leaps, then diagonal and orthogonal rays to the first piece), as design §4.2 describes. `isInCheck(board, color)` wraps it for the king. The 0x88 step tables (`KNIGHT_STEPS`, `KING_STEPS`, `DIAGONALS`, `ORTHOGONALS`) live here and `MoveGen` reuses them.
+- `MoveGen` (internal): `generatePseudoLegal(board, moves: IntArray): Int` writes `Move` bits into a caller-owned buffer of `MAX_MOVES = 256`. It covers pawn pushes, double pushes (flag `DOUBLE_PUSH`) and captures (`CAPTURE`), knight and king steps, and bishop, rook and queen rays. `generateLegal` filters in place (make, test the mover's king with `Attacks.isAttacked`, unmake). `legalMoves(board): List<Move>` is an allocating convenience for tests and later `Position`.
+- `Board.make(move)` / `unmake(move)` with a preallocated undo stack (4 ints per ply: captured piece, castling rights, ep square, halfmove clock; 256 plies to start, doubles when full). `make` sets the ep square behind every double push and clears it otherwise, resets the halfmove clock on pawn moves and captures (else +1), bumps the fullmove number after Black's move, and moves the king square directly (not through `setPiece`, which closes the T-3 follow-up). `unmake` restores every field, so `Board.equals` holds; it throws `IllegalStateException` with an empty history. `copy()` and `clear()` start with an empty history, and the history is not part of `equals`.
+- `Perft` (public object): `perft(fen, depth): Long` and `divide(fen, depth): Map<String, Long>` (UCI-sorted), as design §4.2 makes them public, plus internal `Board` overloads. It has one move buffer per depth (no allocation in the recursion) and bulk-counts at depth 1.
+- **Seams for T-5** (marked `// T-5:` in the code):
+  - `make` throws `UnsupportedOperationException` for `CASTLE`, `EN_PASSANT` or any promotion. It does not silently half-apply them.
+  - The castling, en passant and promotion branches and the castling-right updates go where the `// T-5` comment sits in `make`.
+  - Pawn moves onto the last rank are **not generated** yet; T-5 turns each into four promotions in `addPawnMoves`.
+  - En passant goes in `addPawnCapture`, and castling with the king's steps in `generatePseudoLegal`.
+  - Castling rights are not yet cleared when a king or rook moves. Nothing reads them until castling is generated.
+
+### Files touched
+`engine/src/main/kotlin/chess/engine/board/{Attacks,MoveGen,Perft}.kt` (new), `engine/src/main/kotlin/chess/engine/board/Board.kt`, `engine/src/test/kotlin/chess/engine/board/{AttacksTest,MoveGenTest,MakeUnmakeTest}.kt` (new), `engine/src/test/kotlin/chess/engine/perft/PerftTest.kt` (new), this log.
+
+### Tests added (written first, seen failing)
+Red: `compileTestKotlin` failed with `Unresolved reference 'Attacks'` (and `MoveGen`, `Perft`, `make`, `unmake`). Green after the implementation, with no test changes needed. 44 new tests (engine total 94):
+- `PerftTest` (7):
+  - initial position depth 0–4 = 1 / 20 / 400 / 8,902 / 197,281;
+  - Position 3 depth 1–2 = 14 / 191 (extra; no special moves occur before depth 3 there);
+  - `divide` at depth 3 has 20 root moves summing to 8,902, with e2e4 600, d2d4 560, a2a3 380 and g1f3 440, in UCI order;
+  - `divide` at depth 1;
+  - the FEN overloads match the `Board` ones;
+  - the board is unchanged after perft;
+  - negative perft depth and divide depth 0 are rejected.
+- `MakeUnmakeTest` (11):
+  - Make/unmake of **every legal move and every reply** (depth 2) in all 7 FENs of design §4.2 restores the board (`equals` on every field). Each make also changes the board.
+  - Field updates after a quiet move (checked against the expected FEN), a double push, a capture, a piece move and a pawn move (halfmove/fullmove).
+  - The king square follows the king and comes back.
+  - A 10-ply line with captures and checks reaches the expected FEN and unwinds to the start.
+  - A 600-ply knight shuffle grows the undo stack and unwinds exactly.
+  - `unmake` with no history fails, including on a fresh `copy()` and after `clear()`.
+  - Castling, en passant and promotion are rejected until T-5, and the board is untouched.
+- `MoveGenTest` (15):
+  - the 20 start moves, and Black's 20 after 1.e4;
+  - the `DOUBLE_PUSH` and `CAPTURE` flags;
+  - pawns capture only enemies and only diagonally; pushes stop at blockers; no double push off the start rank;
+  - sliders stop at the first piece and capture only enemies;
+  - **pins**: a rook pinned on a file, a knight pinned on a diagonal (no moves), a bishop pinned on a diagonal and a pawn pinned diagonally (it may only capture the pinner);
+  - the king cannot step onto attacked squares, or retreat along the checking ray;
+  - in check, exactly the 9 evasions (blocks, the capture and king steps) are legal;
+  - pseudo-legal moves include the pinned knight's moves;
+  - generation leaves the board unchanged.
+- `AttacksTest` (11):
+  - the start position's attack map;
+  - white and black pawn directions, and no pawn wrap at the a- and h-files;
+  - knight leaps, including from a corner;
+  - king squares;
+  - rook rays blocked on file and rank; bishop rays blocked, with no wrap from a3 to h3;
+  - queen rays;
+  - colour filtering;
+  - `isInCheck` with and without a blocker.
+
+### Perft results and timing
+- All perft counts in the plan's T-4 list match the Chessprogramming wiki (above).
+- Wall time on the dev machine, from the JUnit XML of the gate run below: `initialPositionDepth0To4` **0.033 s**, and the whole `PerftTest` class **0.091 s**. The JVM was already warm from the earlier test classes.
+- Extra check, not committed: a throwaway test ran start-position perft 5 and got **4,865,351**. That is exactly 4,865,609 minus the 258 en passant captures the wiki lists at that depth, so everything except en passant is already right at depth 5. It took **263 ms** after a depth-4 warm-up (about 18.5 M leaf nodes/s with bulk counting). The plan's T-5 gate time is recorded by T-5.
+
+### Commands run
+- Baseline before changes: `./gradlew :engine:test` → BUILD SUCCESSFUL, 50 tests.
+- Red: `./gradlew :engine:test` → `compileTestKotlin` FAILED (unresolved references above).
+- `./gradlew :engine:test` → BUILD SUCCESSFUL, 94 tests, 0 failures.
+- GATE: `./gradlew --rerun-tasks :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL**, 59 tasks executed.
+  - `:engine:test`: 94 tests, 0 failures, 0 skipped.
+  - `:app:testDebugUnitTest`: 1 test, 0 failures.
+  - Lint: 0 errors, 2 warnings (`OldTargetApi`, `MissingApplicationIcon`, both known since T-1).
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+
+### Deviations from the plan
+- **Signatures.**
+  - `Attacks.isAttacked` takes the board explicitly (`isAttacked(board, sq, by)`); `Attacks` is a stateless object rather than a `Board` method.
+  - `Perft` is in the `board` package as the plan's file list says (`engine/.../board/Perft.kt`), while its test is in `chess.engine.perft` (also as listed).
+  - `perft`/`divide` are public through FEN-string overloads, because `Board` is internal.
+- **Extra test files.** `AttacksTest` and `MoveGenTest` were added beyond the plan's `PerftTest`/`MakeUnmakeTest`, for attack detection and the pin cases. The plan asked for two pin positions; there are four.
+- **Make/unmake round-trip** covers depth 2 (every move and every reply), not only the root moves.
+- **Not done here (as planned).** FEN rejection when the side not to move is in check is not in T-4's plan. It stays a follow-up for `Position.fromFen` (T-6); `Attacks.isAttacked` now makes it a few lines.
+
+### Follow-ups
+- T-5:
+  - Replace the `UnsupportedOperationException` guard in `Board.make` with the special-move branches.
+  - Delete or replace `MakeUnmakeTest.castlingEnPassantAndPromotionAreRejectedUntilT5`.
+  - Generate promotions where `addPawnMoves` currently skips last-rank moves.
+  - Clear castling rights on king or rook moves and rook captures.
+  - Start position depth 5 should then give 4,865,609.
+- `MAX_MOVES = 256` is sized for legal plus pseudo-legal moves. T-5 adds promotions; no realistic position comes near it, but the search (T-8) should keep using it rather than a smaller buffer.
+- T-6: reject a FEN where the side not to move is in check (`Attacks.isInCheck(board, 1 - board.sideToMove)`).
