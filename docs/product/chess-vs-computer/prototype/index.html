@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess vs Computer - clickable prototype (v1 design spec)</title>
+<style>
+/* ---------- Board tokens (fixed, same in light and dark) - see 02-design.md section 6.2 ---------- */
+:root{
+  --sq-light:#F0D9B5; --sq-dark:#8C6A4E; --sq-light-lm:#E8D37A; --sq-dark-lm:#857030;
+  --coord-on-light:#6B4E37; --coord-on-dark:#FFFFFF;
+  --cue-ink:#0D47A1; --cue-halo:#FFFFFF; --cue-check:#B71C1C; --cue-mark:#212121;
+  --font: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --piece-font: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", "Apple Symbols", serif;
+}
+/* ---------- App chrome: approximation of the M3 tonal-spot scheme from seed #6B4E37 ---------- */
+.phone{
+  --surface:#FFF8F5; --on-surface:#211A16; --on-surface-variant:#52443B;
+  --surface-cont-low:#FCF1EB; --surface-cont:#F6EBE5; --surface-cont-high:#F0E5DF; --surface-cont-highest:#EAE0DA;
+  --primary:#7E5636; --on-primary:#FFFFFF; --primary-container:#FFDCC4; --on-primary-container:#2F1500;
+  --secondary-container:#F7DECD; --on-secondary-container:#2A170A;
+  --error:#BA1A1A; --error-container:#FFDAD6; --on-error-container:#410002;
+  --outline:#85736A; --outline-variant:#D7C2B8; --inverse-surface:#372F2A; --inverse-on-surface:#FDEEE6; --inverse-primary:#F2BB93;
+  --b:360px;
+}
+.phone.dark{
+  --surface:#19120E; --on-surface:#F0DFD7; --on-surface-variant:#D7C2B8;
+  --surface-cont-low:#211A16; --surface-cont:#261E1A; --surface-cont-high:#312824; --surface-cont-highest:#3C332E;
+  --primary:#F2BB93; --on-primary:#4A280C; --primary-container:#643F21; --on-primary-container:#FFDCC4;
+  --secondary-container:#5B4334; --on-secondary-container:#F7DECD;
+  --error:#FFB4AB; --error-container:#93000A; --on-error-container:#FFDAD6;
+  --outline:#A08D83; --outline-variant:#52443B; --inverse-surface:#F0DFD7; --inverse-on-surface:#372F2A; --inverse-primary:#7E5636;
+}
+.phone.landscape{ --b:328px; }
+
+*{box-sizing:border-box}
+body{margin:0;background:#E9E6E3;font-family:var(--font);color:#1d1b1a;display:flex;flex-wrap:wrap;gap:32px;padding:24px;align-items:flex-start}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- Phone frame ---------- */
+.phone{width:360px;height:640px;border:10px solid #1b1b1b;border-radius:36px;overflow:hidden;display:flex;flex-direction:column;
+  background:var(--surface);color:var(--on-surface);position:relative;flex:none;font-family:var(--font);box-sizing:content-box}
+.phone.landscape{width:640px;height:360px}
+.sysbar{height:24px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 16px;font-size:12px;color:var(--on-surface-variant)}
+.body{flex:1;display:flex;flex-direction:column;min-height:0}
+.landscape .body{flex-direction:row}
+.app{flex:1;position:relative;min-width:0;min-height:0}
+.navbar{height:48px;flex:none;display:flex;justify-content:space-around;align-items:center}
+.landscape .navbar{height:auto;width:48px;flex-direction:column}
+.navbar button{background:none;border:0;color:var(--on-surface-variant);font-size:18px;width:48px;height:48px;cursor:pointer;border-radius:24px}
+#screen{position:absolute;inset:0;overflow:hidden}
+.screen{height:100%;overflow:auto}
+#overlay{position:absolute;inset:0;pointer-events:none}
+#overlay > *{pointer-events:auto}
+
+/* ---------- Type ---------- */
+.t-headline-m{font:400 28px/36px var(--font);margin:0}
+.t-title-l{font:400 22px/28px var(--font);margin:0}
+.t-title-m{font:500 16px/24px var(--font);margin:0}
+.t-title-s{font:500 14px/20px var(--font);margin:0}
+.t-body-m{font:400 14px/20px var(--font);margin:0}
+.t-body-s{font:400 12px/16px var(--font);margin:0}
+
+/* ---------- Buttons ---------- */
+.btn{font:500 14px/20px var(--font);min-height:40px;padding:10px 24px;border-radius:20px;border:0;cursor:pointer;background:transparent;color:var(--primary)}
+.btn.filled{background:var(--primary);color:var(--on-primary)}
+.btn.tonal{background:var(--secondary-container);color:var(--on-secondary-container)}
+.btn.outlined{border:1px solid var(--outline)}
+.btn.text{padding:10px 12px}
+.btn.block{width:100%}
+.btn.danger,.btn.danger-text{color:var(--error)}
+.btn.inv{color:var(--inverse-primary)}
+.icon-btn{width:48px;height:48px;border-radius:24px;border:0;background:transparent;color:var(--on-surface);font-size:22px;cursor:pointer;flex:none}
+.btn:focus-visible,.act:focus-visible,.icon-btn:focus-visible,.promo-opt:focus-visible,.navbar button:focus-visible,[tabindex="-1"]:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+.radio-row:focus-within{outline:3px solid var(--primary);outline-offset:-3px}
+button:disabled{cursor:default}
+
+/* ---------- Home ---------- */
+.home-col{max-width:480px;margin:0 auto;padding:16px 24px 24px;display:flex;flex-direction:column;gap:12px;text-align:center}
+.mark{width:72px;height:72px;border-radius:20px;background:var(--primary-container);color:var(--on-primary-container);font:48px/1 var(--piece-font);display:flex;align-items:center;justify-content:center;margin:8px auto 0}
+.landscape .mark{width:48px;height:48px;font-size:32px}
+.tagline{margin:0 0 8px;color:var(--on-surface-variant);font:400 16px/24px var(--font)}
+.card{background:var(--surface-cont-low);border:1px solid var(--outline-variant);border-radius:12px;padding:16px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.card .btn{margin-top:8px}
+.banner{background:var(--error-container);color:var(--on-error-container);border-radius:12px;padding:12px 8px 12px 16px;text-align:left;display:flex;gap:8px;align-items:flex-start}
+.banner p{margin:4px 0 0;font-size:14px;line-height:20px}
+.banner .btn{color:var(--on-error-container)}
+
+/* ---------- Game layout (stacked, portrait) - 56 / board / 40 / 48 / 64 ---------- */
+.game{height:100%;display:grid;grid-template-columns:100%;grid-template-rows:56px var(--b) 40px 48px 64px}
+.g-top{display:flex;align-items:center;gap:4px;padding:0 8px 0 4px;height:56px}
+.g-top h1{flex:1}
+.g-board{grid-row:2;grid-column:1;display:flex;align-items:center;justify-content:center}
+.g-status{grid-row:3;grid-column:1;display:flex;align-items:center;gap:12px;padding:0 16px;min-height:40px}
+.g-status.err{background:var(--error-container);color:var(--on-error-container)}
+.g-moves{grid-row:4;grid-column:1;display:flex;min-width:0;border-top:1px solid var(--outline-variant)}
+.g-actions{grid-row:5;grid-column:1;display:flex;border-top:1px solid var(--outline-variant)}
+.g-result{grid-row:3 / span 3;grid-column:1;background:var(--secondary-container);color:var(--on-secondary-container);padding:12px 16px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.game.over .g-moves{display:none}
+
+/* ---------- Game layout (side-by-side, landscape) ---------- */
+.landscape .game{grid-template-columns:calc(var(--b) + 8px) 1fr;grid-template-rows:56px auto 1fr 64px}
+.landscape .g-board{grid-row:1 / span 4;grid-column:1}
+.landscape .g-top{grid-row:1;grid-column:2}
+.landscape .g-status{grid-row:2;grid-column:2;min-height:48px}
+.landscape .g-moves{grid-row:3;grid-column:2;flex-direction:column;min-height:0}
+.landscape .g-actions{grid-row:4;grid-column:2}
+.landscape .g-result{grid-row:2;grid-column:2;border-radius:12px;margin:0 8px}
+.landscape .game.over{grid-template-rows:56px auto 1fr 0}
+.landscape .game.over .g-moves{display:flex}
+
+/* ---------- Status row bits ---------- */
+.spin{width:18px;height:18px;border:2.5px solid var(--primary);border-right-color:transparent;border-radius:50%;animation:spin 1s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.turn-dot{width:12px;height:12px;border-radius:50%;border:1px solid var(--outline);flex:none}
+.turn-dot.w{background:#fff}.turn-dot.b{background:#111}
+.mini-badge{width:18px;height:18px;border-radius:50%;background:var(--cue-check);color:#fff;font:700 14px/18px var(--font);text-align:center;box-shadow:0 0 0 1.5px #fff;flex:none}
+.ic{width:18px;height:18px;border-radius:50%;border:2px solid currentColor;font:700 11px/14px var(--font);text-align:center;flex:none}
+
+/* ---------- Move list ---------- */
+.moves-h{display:none;padding:8px 16px 4px}
+.landscape .moves-h{display:block}
+.moves-list{flex:1;display:flex;align-items:center;gap:16px;overflow-x:auto;overflow-y:hidden;white-space:nowrap;padding:0 16px;font:400 15px/20px var(--font);font-variant-numeric:tabular-nums}
+.landscape .moves-list{display:block;overflow-y:auto;overflow-x:hidden;padding:0 8px 8px;white-space:normal}
+.pair{display:inline-flex;gap:6px;align-items:center}
+.landscape .pair{display:grid;grid-template-columns:40px 1fr 1fr;height:32px}
+.pair .no{color:var(--on-surface-variant)}
+.landscape .pair .no{text-align:right;padding-right:8px}
+.ply{padding:2px 6px;border-radius:8px}
+.ply.latest{font-weight:700;background:var(--secondary-container);color:var(--on-secondary-container)}
+.ply.dim{color:var(--on-surface-variant)}
+.moves-list .empty{color:var(--on-surface-variant);font-size:14px}
+.landscape .moves-list .empty{display:block;padding:8px}
+
+/* ---------- Action row ---------- */
+.act{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:none;border:0;border-radius:16px;margin:4px;
+  color:var(--primary);font:500 12px/16px var(--font);min-height:48px;cursor:pointer}
+.act .ai{font-size:22px;line-height:24px}
+.act:disabled{color:var(--on-surface);opacity:.38}
+
+/* ---------- Result panel ---------- */
+.res-head{display:flex;align-items:center;gap:8px}
+.res-icon{font:24px/1 var(--piece-font);width:28px;text-align:center}
+.g-result .meta{opacity:.85}
+.res-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.g-result .btn.outlined{border-color:var(--on-secondary-container);color:var(--on-secondary-container)}
+.g-result .btn.text{color:var(--on-secondary-container)}
+
+/* ---------- Board ---------- */
+.board{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:var(--b);height:var(--b);--s:calc(var(--b) / 8)}
+.sq{position:relative;border:0;padding:0;margin:0;display:flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;overflow:hidden;width:100%;height:100%}
+.sq.light{background:var(--sq-light)}.sq.dark{background:var(--sq-dark)}
+.sq.light.lm{background:var(--sq-light-lm)}.sq.dark.lm{background:var(--sq-dark-lm)}
+.chk-tint{position:absolute;inset:0;background:radial-gradient(circle, rgba(183,28,28,.55) 0%, rgba(183,28,28,0) 70%)}
+.crd{position:absolute;font:600 calc(var(--s) * .24)/1 var(--font);pointer-events:none}
+.crd.rank{top:2px;left:2px}.crd.file{bottom:2px;right:2px}
+.sq.light .crd{color:var(--coord-on-light)}.sq.dark .crd{color:var(--coord-on-dark)}
+.lm-mark{position:absolute;left:0;bottom:0;width:0;height:0;border-left:max(8px, calc(var(--s) * .22)) solid var(--cue-mark);border-top:max(8px, calc(var(--s) * .22)) solid transparent}
+.pc{position:relative;z-index:2;font-size:calc(var(--s) * .8);line-height:1;font-family:var(--piece-font);pointer-events:none}
+.pw{color:#fff;text-shadow:1px 1px 0 #000,-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,0 1px 0 #000,0 -1px 0 #000,1px 0 0 #000,-1px 0 0 #000}
+.pb{color:#111;text-shadow:0 0 1px rgba(255,255,255,.8)}
+.sel{position:absolute;inset:0;z-index:3;--w:max(3px, calc(var(--s) * .08));box-shadow:inset 0 0 0 var(--w) var(--cue-ink), inset 0 0 0 calc(var(--w) + 1.5px) var(--cue-halo)}
+.dot{position:absolute;z-index:3;width:max(12px, calc(var(--s) * .3));height:max(12px, calc(var(--s) * .3));border-radius:50%;background:var(--cue-ink);box-shadow:0 0 0 1.5px var(--cue-halo)}
+.ring{position:absolute;z-index:3;width:calc(var(--s) * .92);height:calc(var(--s) * .92);border-radius:50%;border:max(3px, calc(var(--s) * .08)) solid var(--cue-ink);box-shadow:0 0 0 1.5px var(--cue-halo), inset 0 0 0 1.5px var(--cue-halo)}
+.badge{position:absolute;z-index:4;top:2px;right:2px;width:max(14px, calc(var(--s) * .36));height:max(14px, calc(var(--s) * .36));border-radius:50%;background:var(--cue-check);color:#fff;
+  font:700 calc(var(--s) * .3)/1 var(--font);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1.5px var(--cue-halo)}
+.sq:focus{outline:none}
+.sq:focus-visible::after{content:"";position:absolute;inset:3px;border-radius:4px;border:2px solid var(--cue-mark);box-shadow:0 0 0 2px #fff;z-index:6}
+
+/* ---------- Sheet, dialogs, snackbar ---------- */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.32);z-index:20}
+.dialog-scrim{z-index:30}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-height:calc(100% - 16px);z-index:21;background:var(--surface-cont-low);border-radius:28px 28px 0 0;display:flex;flex-direction:column;box-shadow:0 -2px 12px rgba(0,0,0,.2)}
+.landscape .sheet{left:50%;right:auto;transform:translateX(-50%);width:min(100%, 520px)}
+.handle{width:32px;height:4px;border-radius:2px;background:var(--on-surface-variant);opacity:.4;margin:16px auto 8px;flex:none}
+.sheet-body{overflow:auto;padding:0 16px 8px}
+.sheet-body h2{padding:4px 8px 8px}
+.sheet-foot{padding:12px 16px 16px;border-top:1px solid var(--outline-variant);flex:none}
+fieldset{border:0;margin:0 0 4px;padding:0}
+legend{font:500 14px/20px var(--font);padding:12px 8px 4px;color:var(--on-surface-variant)}
+.radio-row{display:flex;align-items:center;gap:16px;min-height:48px;padding:4px 8px;border-radius:12px;cursor:pointer;font:400 16px/24px var(--font)}
+.radio-row.two{min-height:64px}
+.radio-row input{width:20px;height:20px;accent-color:var(--primary);margin:0;flex:none}
+.radio-row .rl{flex:1}
+.radio-row small{display:block;color:var(--on-surface-variant);font-size:14px;line-height:20px}
+.radio-row .ri{font-size:24px}
+.dialog{position:absolute;z-index:31;left:50%;top:50%;transform:translate(-50%,-50%);width:min(312px, calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;
+  background:var(--surface-cont-high);border-radius:28px;padding:24px;box-shadow:0 6px 24px rgba(0,0,0,.3)}
+.dialog h2{font:400 24px/32px var(--font);margin:0 0 16px}
+.dialog p{margin:0 0 24px;color:var(--on-surface-variant);font-size:14px;line-height:20px}
+.dlg-actions{display:flex;justify-content:flex-end;gap:8px}
+.promo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.promo-opt{min-height:88px;border:1px solid var(--outline-variant);border-radius:12px;background:var(--surface);color:var(--on-surface);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font:500 13px/16px var(--font);padding:4px 0}
+.promo-opt .pc{font-size:40px}
+#snack{position:absolute;left:8px;right:8px;bottom:16px;z-index:40;background:var(--inverse-surface);color:var(--inverse-on-surface);border-radius:4px;padding:6px 8px 6px 16px;min-height:48px;font-size:14px;line-height:20px;
+  display:none;align-items:center;gap:8px;justify-content:space-between;box-shadow:0 3px 10px rgba(0,0,0,.3)}
+#snack.show{display:flex}
+#snack.above-actions{bottom:72px}
+.landscape #snack.above-actions{left:344px}
+
+/* ---------- Stats / About ---------- */
+.sub-body{max-width:600px;margin:0 auto;padding:8px 16px 24px;display:flex;flex-direction:column;gap:8px}
+.sub-body h2{margin-top:12px}
+.ocard{border:1px solid var(--outline-variant);border-radius:12px;padding:4px 16px}
+.kv{display:flex;justify-content:space-between;align-items:center;min-height:48px;font-size:16px}
+.kv b{font:500 16px/24px var(--font);font-variant-numeric:tabular-nums}
+.note{margin:0;color:var(--on-surface-variant);font-size:12px;line-height:16px}
+.tbl{width:100%;border-collapse:collapse;font-size:15px;font-variant-numeric:tabular-nums}
+.tbl th,.tbl td{height:48px;text-align:right;padding:0 4px;font-weight:400}
+.tbl thead th{font:500 12px/16px var(--font);color:var(--on-surface-variant);height:40px}
+.tbl th:first-child{text-align:left}
+.tbl tbody tr+tr{border-top:1px solid var(--outline-variant)}
+.sub-body p{margin:0;font-size:14px;line-height:20px}
+details summary{cursor:pointer;color:var(--primary);font-weight:500;min-height:40px;display:flex;align-items:center}
+
+/* ---------- Prototype controls (outside the phone) ---------- */
+.panel{max-width:400px;font-size:14px;line-height:20px}
+.panel h1{font-size:20px;margin:0 0 8px}
+.panel h2{font-size:15px;margin:16px 0 6px}
+.panel button,.panel select{font:inherit;padding:6px 10px;margin:0 6px 6px 0;border-radius:8px;border:1px solid #9b8f88;background:#fff;cursor:pointer}
+.panel label{display:inline-flex;gap:6px;align-items:center;margin-right:12px}
+#log{background:#fff;border:1px solid #cfc6c0;border-radius:8px;padding:8px 8px 8px 28px;max-height:220px;overflow:auto;margin:0;font-size:13px}
+#log li+li{margin-top:4px;color:#555}
+.panel p{margin:4px 0}
+
+@media (prefers-reduced-motion: reduce){ .spin{animation:none;border-right-color:var(--primary);border-style:dotted} }
+</style>
+</head>
+<body>
+
+<div class="phone" id="phone">
+  <div class="sysbar" aria-hidden="true"><span>9:41</span><span>offline &#9679;</span></div>
+  <div class="body">
+    <div class="app">
+      <div id="screen"></div>
+      <div id="overlay"></div>
+      <div id="snack" role="status" aria-live="polite"></div>
+      <div id="live" class="sr-only" aria-live="polite"></div>
+    </div>
+    <div class="navbar">
+      <button data-act="nav-back" aria-label="System back">&#9665;</button>
+      <button aria-label="System home (not simulated)" tabindex="-1">&#9675;</button>
+      <button aria-label="Recents (not simulated)" tabindex="-1">&#9633;</button>
+    </div>
+  </div>
+</div>
+
+<aside class="panel" aria-label="Prototype controls">
+  <h1>Chess vs Computer: prototype</h1>
+  <p>Phone frame: 360 x 640 dp with 3-button navigation, the tightest size in the spec (section 4.1). Use the &#9665; button for system back.</p>
+  <p><strong>Scripted.</strong> Moves are simplified (no castling, en passant or draw rules), and the computer is a tiny mate-in-one / capture picker that "thinks" for 1.2 s. Pieces are Unicode stand-ins; the app uses the Cburnett set.</p>
+
+  <h2>Scenarios</h2>
+  <button data-ctl="reset">First launch</button>
+  <button data-ctl="saved">Home with a saved game</button>
+  <button data-ctl="promo">Promotion endgame</button>
+  <p>Promotion endgame: tap the pawn on e7, then e8. Queen or Rook mates. Bishop or Knight lets the computer mate you with Rb1.</p>
+
+  <h2>Previews</h2>
+  <select data-ctl="result" aria-label="Preview a result panel">
+    <option value="">Preview a result panel&#8230;</option>
+    <option value="mate_win">Checkmate. You win</option>
+    <option value="mate_loss">Checkmate. Computer wins</option>
+    <option value="stalemate_comp">Draw by stalemate</option>
+    <option value="threefold">Draw by threefold repetition</option>
+    <option value="fifty">Draw by 50-move rule</option>
+    <option value="insufficient">Draw by insufficient material</option>
+    <option value="resigned">You resigned. Computer wins</option>
+  </select><br>
+  <button data-ctl="corrupt">Corrupt-save message</button>
+  <button data-ctl="storage">Storage-full message</button>
+  <br>
+  <label><input type="checkbox" data-ctl="dark"> Dark theme</label>
+  <label><input type="checkbox" data-ctl="land"> Landscape</label>
+
+  <h2>Keyboard</h2>
+  <p>Tab into the board, then use the arrows to move, Enter to select or move, Esc to deselect or close, and Ctrl+Z to undo.</p>
+
+  <h2>Screen reader announcements (live region)</h2>
+  <ol id="log" reversed></ol>
+</aside>
+
+<script>
+(function(){
+'use strict';
+var FILES='abcdefgh';
+var GLYPH={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟︎'};
+var NAME={K:'king',Q:'queen',R:'rook',B:'bishop',N:'knight',P:'pawn'};
+var LEVELS={1:['Beginner','Makes lots of mistakes. Good for learning.'],2:['Casual','Plays sensibly, but misses tactics.'],3:['Club','Solid. Punishes careless moves.'],4:['Strong','Plays its best. Thinks for up to 4 seconds.']};
+var RESULTS={
+  mate_win:{title:'Checkmate. You win',expl:"The computer's king is in check and has no legal moves.",kind:'w',icon:'K'},
+  mate_loss:{title:'Checkmate. Computer wins',expl:'Your king is in check and has no legal moves.',kind:'l',icon:'K'},
+  stalemate_comp:{title:'Draw by stalemate',expl:"The computer has no legal moves, but its king isn't in check.",kind:'d',icon:'½'},
+  stalemate_you:{title:'Draw by stalemate',expl:"You have no legal moves, but your king isn't in check.",kind:'d',icon:'½'},
+  threefold:{title:'Draw by threefold repetition',expl:'The same position came up 3 times.',kind:'d',icon:'½'},
+  fifty:{title:'Draw by 50-move rule',expl:'50 moves each without a capture or a pawn move.',kind:'d',icon:'½'},
+  insufficient:{title:'Draw by insufficient material',expl:'Neither side has enough pieces left to checkmate.',kind:'d',icon:'½'},
+  resigned:{title:'You resigned. Computer wins',expl:'',kind:'l',icon:'⚑'}
+};
+var PREF={b:['e7e5','b8c6','g8f6','d7d6','f8e7','c7c6'],w:['e2e4','g1f3','f1c4','b1c3','d2d3','h2h3']};
+
+var phone=document.getElementById('phone');
+var screenEl=document.getElementById('screen');
+var overlayEl=document.getElementById('overlay');
+var snack=document.getElementById('snack');
+var live=document.getElementById('live');
+var log=document.getElementById('log');
+var snackTimer=null;
+
+function cap(s){return s.charAt(0).toUpperCase()+s.slice(1);}
+function sq(f,r){return FILES[f]+(r+1);}
+function fr(s){return [FILES.indexOf(s[0]),Number(s[1])-1];}
+function other(c){return c==='w'?'b':'w';}
+function sideName(c){return c==='w'?'White':'Black';}
+
+/* ---------------- Tiny rules core (prototype only) ---------------- */
+function startPos(){
+  var p={},back='RNBQKBNR';
+  for(var f=0;f<8;f++){p[sq(f,0)]='w'+back[f];p[sq(f,1)]='wP';p[sq(f,6)]='bP';p[sq(f,7)]='b'+back[f];}
+  return p;
+}
+function promoPos(){
+  return {g1:'wK',f2:'wP',g2:'wP',h2:'wP',e7:'wP',g8:'bK',b2:'bR',f7:'bP',g7:'bP',h7:'bP',a5:'bP'};
+}
+function pseudo(pos,from){
+  var pc=pos[from]; if(!pc) return [];
+  var c=pc[0],t=pc[1],x=fr(from),f=x[0],r=x[1],out=[];
+  function add(tf,tr){
+    if(tf<0||tf>7||tr<0||tr>7) return false;
+    var to=sq(tf,tr),occ=pos[to];
+    if(!occ){out.push({from:from,to:to,capture:null});return true;}
+    if(occ[0]!==c) out.push({from:from,to:to,capture:occ});
+    return false;
+  }
+  if(t==='P'){
+    var dir=c==='w'?1:-1,start=c==='w'?1:6,nr=r+dir;
+    if(nr>=0&&nr<=7&&!pos[sq(f,nr)]){
+      out.push({from:from,to:sq(f,nr),capture:null});
+      if(r===start&&!pos[sq(f,r+2*dir)]) out.push({from:from,to:sq(f,r+2*dir),capture:null});
+    }
+    [-1,1].forEach(function(df){
+      var tf=f+df; if(tf<0||tf>7||nr<0||nr>7) return;
+      var to=sq(tf,nr); if(pos[to]&&pos[to][0]!==c) out.push({from:from,to:to,capture:pos[to]});
+    });
+    out.forEach(function(m){var rr=m.to[1]; if(rr==='8'||rr==='1') m.promo=true;});
+  } else if(t==='N'){
+    [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]].forEach(function(d){add(f+d[0],r+d[1]);});
+  } else if(t==='K'){
+    for(var a=-1;a<=1;a++) for(var b=-1;b<=1;b++) if(a||b) add(f+a,r+b);
+  } else {
+    var dirs=[];
+    if(t!=='B') dirs.push([1,0],[-1,0],[0,1],[0,-1]);
+    if(t!=='R') dirs.push([1,1],[1,-1],[-1,1],[-1,-1]);
+    dirs.forEach(function(d){var k=1; while(add(f+d[0]*k,r+d[1]*k)) k++;});
+  }
+  return out;
+}
+function apply(pos,m,promo){
+  var n=Object.assign({},pos),pc=n[m.from]; delete n[m.from];
+  if(m.promo) pc=pc[0]+(promo||'Q');
+  n[m.to]=pc; return n;
+}
+function kingSq(pos,c){for(var s in pos) if(pos[s]===c+'K') return s; return null;}
+function attacked(pos,s,by){
+  for(var from in pos){ if(pos[from][0]!==by) continue; if(pseudo(pos,from).some(function(m){return m.to===s;})) return true; }
+  return false;
+}
+function inCheck(pos,c){var k=kingSq(pos,c); return k?attacked(pos,k,other(c)):false;}
+function legalFrom(pos,from){var c=pos[from][0]; return pseudo(pos,from).filter(function(m){return !inCheck(apply(pos,m,'Q'),c);});}
+function allLegal(pos,c){var out=[]; for(var s in pos) if(pos[s][0]===c) out=out.concat(legalFrom(pos,s)); return out;}
+function insufficient(pos){
+  var others=Object.keys(pos).map(function(s){return pos[s];}).filter(function(p){return p[1]!=='K';});
+  return others.length===0 || (others.length===1 && 'BN'.indexOf(others[0][1])>=0);
+}
+function gameEnd(pos,c){
+  if(!allLegal(pos,c).length) return inCheck(pos,c)?'mate':'stalemate';
+  if(insufficient(pos)) return 'insufficient';
+  return null;
+}
+function sanOf(pos,m,promo,after,mover){
+  var t=pos[m.from][1],s;
+  if(t==='P'){ s=m.capture? m.from[0]+'x'+m.to : m.to; if(m.promo) s+='='+(promo||'Q'); }
+  else s=t+(m.capture?'x':'')+m.to;
+  var o=other(mover);
+  if(inCheck(after,o)) s+= allLegal(after,o).length?'+':'#';
+  return s;
+}
+function moveWords(pos,m,promo){
+  var name=NAME[pos[m.from][1]];
+  var s=m.capture? name+' '+m.from+' takes '+NAME[m.capture[1]]+' on '+m.to : name+' '+m.from+' to '+m.to;
+  if(m.promo) s+=', promotes to '+NAME[promo||'Q'];
+  return s;
+}
+function sanSpeech(san){
+  var suf='';
+  if(san.slice(-1)==='#'){suf=', checkmate';san=san.slice(0,-1);} else if(san.slice(-1)==='+'){suf=', check';san=san.slice(0,-1);}
+  if(san==='O-O') return 'castles kingside'+suf;
+  if(san==='O-O-O') return 'castles queenside'+suf;
+  var promo='',pi=san.indexOf('=');
+  if(pi>=0){promo=', promotes to '+NAME[san[pi+1]];san=san.slice(0,pi);}
+  var piece='pawn';
+  if('KQRBN'.indexOf(san[0])>=0){piece=NAME[san[0]];san=san.slice(1);}
+  var dest=san.slice(-2),mid=san.slice(0,-2),capt=mid.indexOf('x')>=0,dis=mid.replace('x','');
+  var out;
+  if(piece==='pawn') out= capt? dis+' takes '+dest : dest;
+  else out= dis? piece+' from '+dis+(capt?' takes ':' to ')+dest : piece+' '+(capt?'takes ':'')+dest;
+  return out+promo+suf;
+}
+
+/* ---------------- State ---------------- */
+var S;
+function newStats(){return {started:0,completed:0,abandoned:0,lvl:{1:{w:0,d:0,l:0},2:{w:0,d:0,l:0},3:{w:0,d:0,l:0},4:{w:0,d:0,l:0}}};}
+function initState(){
+  if(S) clearTimeout(S.timer);
+  S={screen:'home',active:false,side:'w',level:2,last:{side:'w',level:2},
+     pos:{},turn:'w',selected:null,legal:[],lastMove:null,check:null,thinking:false,timer:null,held:null,
+     over:null,recorded:null,history:[],moves:[],startNo:1,startColor:'w',pendingPromo:null,hint:null,hintTimer:null,
+     corrupt:false,sheet:null,dialog:null,kb:'a8',focus:null,stats:newStats()};
+}
+function inProgress(){return S.active && !S.over;}
+function topLeft(){return S.side==='w'?'a8':'h1';}
+function fullmoveNow(){return S.startNo+Math.floor((S.moves.length+(S.startColor==='b'?1:0))/2);}
+function fullmovesPlayed(){var p=S.moves.length; if(!p) return 0; return S.startNo+Math.floor((p+(S.startColor==='b'?1:0)-1)/2);}
+function canUndo(){return S.active && !S.pendingPromo && S.history.some(function(h){return h.turn===S.side;});}
+
+/* ---------------- Announcements, hints, snackbar ---------------- */
+function addLog(text){
+  var li=document.createElement('li'); li.textContent=text; log.insertBefore(li,log.firstChild);
+  while(log.children.length>40) log.removeChild(log.lastChild);
+}
+function announce(text){
+  live.textContent='';
+  setTimeout(function(){live.textContent=text;},60);
+  addLog(text);
+}
+function showHint(text){
+  S.hint=text; clearTimeout(S.hintTimer);
+  S.hintTimer=setTimeout(function(){S.hint=null; if(S.screen==='game') render();},2500);
+}
+function showSnack(text,ms,action){
+  snack.innerHTML='<span>'+text+'</span>'+(action?'<button class="btn text inv" data-act="snack-ok">'+action+'</button>':'');
+  snack.classList.toggle('above-actions', S.screen==='game' && !S.over);
+  snack.classList.add('show');
+  addLog('(snackbar) '+text);
+  clearTimeout(snackTimer); snackTimer=setTimeout(hideSnack, ms||4000);
+}
+function hideSnack(){snack.classList.remove('show');}
+
+/* ---------------- Game actions ---------------- */
+function startGame(sideChoice,level,opts){
+  opts=opts||{};
+  clearTimeout(S.timer); S.held=null;
+  var side= sideChoice==='r' ? (Math.random()<0.5?'w':'b') : sideChoice;
+  S.last={side:sideChoice,level:level};
+  Object.assign(S,{active:true,side:side,level:level,pos:startPos(),turn:'w',selected:null,legal:[],lastMove:null,check:null,
+    thinking:false,over:null,recorded:null,history:[],moves:[],startNo:1,startColor:'w',pendingPromo:null,hint:null,sheet:null,dialog:null});
+  S.kb=topLeft(); S.stats.started++; S.screen='game';
+  if(!opts.silent){
+    var lv='Level '+level+', '+LEVELS[level][0];
+    if(sideChoice==='r'){ announce('New game against '+lv+'.'); showSnack(side==='w'?'You play White':'You play Black',4000); }
+    else announce('New game against '+lv+'. You play '+sideName(side)+'. '+(side==='w'?'Your move.':'Computer is thinking.'));
+    S.focus='[data-sq="'+S.kb+'"]';
+  }
+  render();
+  if(side==='b' && !opts.noAI) computerTurn();
+}
+function handleSquare(s){
+  if(S.over||S.pendingPromo||S.screen!=='game') return;
+  if(S.turn!==S.side) return;                      // computer's turn: taps do nothing
+  var pc=S.pos[s];
+  if(S.selected){
+    var m=S.legal.filter(function(x){return x.to===s;})[0];
+    if(m){ playerMove(m); return; }
+    if(s===S.selected){ S.selected=null; S.legal=[]; announce('Selection cleared.'); render(); return; }
+  }
+  if(pc && pc[0]===S.side){
+    var legal=legalFrom(S.pos,s);
+    if(!legal.length){
+      S.selected=null; S.legal=[]; showHint('No legal moves for that piece');
+      announce(cap(NAME[pc[1]])+' '+s+' has no legal moves.'); render(); return;
+    }
+    S.selected=s; S.legal=legal;
+    var n=legal.length;
+    announce(cap(NAME[pc[1]])+' '+s+' selected. '+n+(n===1?' move':' moves')+(n<=8?': '+legal.map(function(x){return x.to;}).join(', '):'')+'.');
+    render(); return;
+  }
+  if(S.selected){ S.selected=null; S.legal=[]; render(); }
+}
+function playerMove(m){
+  if(m.promo){ S.pendingPromo=m; S.dialog='promo'; S.focus='[data-piece="Q"]'; render(); return; }
+  doMove(m,null,'You');
+}
+function completePromo(piece){
+  var m=S.pendingPromo; S.pendingPromo=null; S.dialog=null; S.kb=m.to; S.focus='[data-sq="'+m.to+'"]';
+  doMove(m,piece,'You');
+}
+function cancelPromo(){
+  var m=S.pendingPromo; S.pendingPromo=null; S.dialog=null; S.selected=null; S.legal=[];
+  S.kb=m.from; S.focus='[data-sq="'+m.from+'"]'; announce('Promotion cancelled.'); render();
+}
+function doMove(m,promo,actor,opts){
+  opts=opts||{};
+  var before=S.pos,mover=S.turn,opp=other(mover);
+  S.history.push({pos:before,turn:mover,lastMove:S.lastMove,check:S.check,n:S.moves.length});
+  var after=apply(before,m,promo);
+  S.moves.push({san:sanOf(before,m,promo,after,mover),c:mover});
+  S.pos=after; S.turn=opp; S.lastMove={from:m.from,to:m.to}; S.selected=null; S.legal=[];
+  S.check=inCheck(after,opp)? kingSq(after,opp) : null;
+  var end=gameEnd(after,opp);
+  var text=actor+': '+moveWords(before,m,promo);
+  if(end==='mate'){ text+=', checkmate. '+(mover===S.side?'You win.':'Computer wins.'); finish(mover===S.side?'mate_win':'mate_loss'); }
+  else if(end==='stalemate'){ text+='. Draw by stalemate.'; finish(mover===S.side?'stalemate_comp':'stalemate_you'); }
+  else if(end==='insufficient'){ text+=(S.check?', check':'')+'. Draw by insufficient material.'; finish('insufficient'); }
+  else text+= S.check?', check.':'.';
+  if(!opts.silent) announce(text);
+  if(!opts.noRender) render();
+  if(!S.over && S.turn!==S.side && !opts.noAI) computerTurn();
+}
+function finish(key){
+  S.over=key; var k=RESULTS[key].kind;
+  S.stats.completed++; S.stats.lvl[S.level][k]++; S.recorded=k;
+  S.thinking=false; clearTimeout(S.timer); S.held=null; S.focus='#res-title';
+}
+function unrecord(){
+  if(S.recorded){ S.stats.completed--; S.stats.lvl[S.level][S.recorded]--; S.recorded=null; }
+}
+function pickMove(){
+  var c=S.turn,opp=other(c),legal=allLegal(S.pos,c),i,m;
+  if(!legal.length) return null;
+  for(i=0;i<legal.length;i++){ var a=apply(S.pos,legal[i],'Q'); if(inCheck(a,opp) && !allLegal(a,opp).length) return legal[i]; }
+  var val={P:1,N:3,B:3,R:5,Q:9,K:0};
+  var caps=legal.filter(function(x){return x.capture;}).sort(function(x,y){return val[y.capture[1]]-val[x.capture[1]];});
+  if(caps.length && Math.random()<0.7) return caps[0];
+  for(i=0;i<PREF[c].length;i++){
+    var p=PREF[c][i];
+    m=legal.filter(function(x){return x.from===p.slice(0,2)&&x.to===p.slice(2);})[0];
+    if(m) return m;
+  }
+  return legal[Math.floor(Math.random()*legal.length)];
+}
+function computerTurn(){
+  S.thinking=true; render();
+  clearTimeout(S.timer);
+  S.timer=setTimeout(function(){
+    var m=pickMove();
+    if(!m){ S.thinking=false; render(); return; }
+    if(S.dialog||S.sheet){ S.held=m; return; }   // hold while a dialog or the sheet is open (spec US-6)
+    S.thinking=false; doMove(m,'Q','Computer');
+  },1200);
+}
+function releaseHeld(){
+  if(!S.held) return;
+  var m=S.held; S.held=null;
+  S.timer=setTimeout(function(){
+    if(S.over||S.turn===S.side) return;
+    S.thinking=false; doMove(m,'Q','Computer');
+  },400);
+}
+function undo(){
+  if(!canUndo()) return;
+  clearTimeout(S.timer); S.thinking=false; S.held=null;
+  var wasOver=!!S.over; if(wasOver) unrecord();
+  var snap,n=0;
+  do { snap=S.history.pop(); n++; } while(snap.turn!==S.side);
+  S.pos=snap.pos; S.turn=snap.turn; S.lastMove=snap.lastMove; S.check=snap.check; S.moves=S.moves.slice(0,snap.n);
+  S.over=null; S.selected=null; S.legal=[];
+  announce((wasOver?'Game reopened. ':'')+(n===1?'Move taken back.':n+' moves taken back.')+' Your move.');
+  if(wasOver || !canUndo()) S.focus='[data-sq="'+S.kb+'"]';
+  render();
+}
+function openSheet(origin){
+  S.sheet={origin:origin,side:S.last.side,level:S.last.level};
+  S.focus='[data-fk="side-'+S.sheet.side+'"]'; render();
+}
+function originFocus(origin){return origin==='home'?'[data-fk="home-new"]':(S.over?'[data-fk="res-new"]':'[data-fk="act-new"]');}
+function closeSheet(){var o=S.sheet.origin; S.sheet=null; S.focus=originFocus(o); render(); releaseHeld();}
+function play(){
+  if(inProgress()){ S.dialog='abandon'; S.focus='[data-fk="dlg-cancel"]'; render(); return; }
+  var sd=S.sheet; startGame(sd.side,sd.level);
+}
+function dialogCancel(kind){
+  if(kind==='abandon'){ var o=S.sheet?S.sheet.origin:'game'; S.dialog=null; S.sheet=null; S.focus=originFocus(o); render(); releaseHeld(); }
+  else if(kind==='resign'){ S.dialog=null; S.focus='[data-fk="act-resign"]'; render(); releaseHeld(); }
+  else if(kind==='reset'){ S.dialog=null; S.focus='[data-fk="stats-reset"]'; render(); }
+}
+function dialogConfirm(kind){
+  if(kind==='abandon'){
+    S.stats.abandoned++; var sd=S.sheet; S.dialog=null; S.sheet=null; S.active=false; startGame(sd.side,sd.level);
+  } else if(kind==='resign'){
+    clearTimeout(S.timer); S.held=null; S.thinking=false; S.dialog=null; S.selected=null; S.legal=[];
+    finish('resigned'); announce('You resigned. Computer wins.'); render();
+  } else if(kind==='reset'){
+    S.stats=newStats(); if(inProgress()) S.stats.started=1;
+    S.dialog=null; S.focus='[data-fk="stats-reset"]'; render(); showSnack('Stats reset',4000);
+  }
+}
+function goHome(){ S.selected=null; S.legal=[]; S.screen='home'; S.focus=null; hideSnack(); render(); }
+function back(){
+  if(S.dialog==='promo') return cancelPromo();
+  if(S.dialog) return dialogCancel(S.dialog);
+  if(S.sheet) return closeSheet();
+  if(S.screen!=='home') return goHome();
+  showSnack('Back on Home leaves the app (not simulated).',2500);
+}
+
+/* ---------------- Rendering ---------------- */
+function homeHTML(){
+  var ip=inProgress(),card='',banner='';
+  if(ip){
+    card='<section class="card" aria-labelledby="ip-h"><h2 id="ip-h" class="t-title-m">Game in progress</h2>'+
+      '<p class="t-body-m">Level '+S.level+' · '+LEVELS[S.level][0]+' · You play '+sideName(S.side)+'</p>'+
+      '<p class="t-body-m">Move '+fullmoveNow()+' · '+(S.turn===S.side?'Your move':'Computer to move')+'</p>'+
+      '<button class="btn filled block" data-act="continue" data-fk="home-continue">Continue game</button></section>';
+  }
+  if(S.corrupt){
+    banner='<div class="banner" role="status"><div><strong>Couldn\'t restore your last game</strong>'+
+      '<p>The saved game was damaged, so it was removed. Your stats aren\'t affected.</p></div>'+
+      '<button class="btn text" data-act="banner-ok" data-fk="banner-ok">OK</button></div>';
+  }
+  return '<div class="screen"><div class="home-col">'+banner+
+    '<div class="mark" aria-hidden="true">'+GLYPH.N+'</div>'+
+    '<h1 class="t-headline-m">Chess</h1><p class="tagline">Play the computer. Offline, no account, no ads.</p>'+card+
+    '<button class="btn '+(ip?'tonal':'filled')+' block" data-act="new" data-fk="home-new">New game</button>'+
+    '<button class="btn outlined block" data-act="stats" data-fk="home-stats">Stats</button>'+
+    '<button class="btn text block" data-act="about" data-fk="home-about">About</button></div></div>';
+}
+function displayPos(){
+  if(!S.pendingPromo) return S.pos;
+  var m=S.pendingPromo,p=Object.assign({},S.pos); p[m.to]=p[m.from]; delete p[m.from]; return p;
+}
+function squareLabel(s,pc,sel,lg,chk,lm){
+  var t=s+', '+(pc?(pc[0]==='w'?'white ':'black ')+NAME[pc[1]]:'empty');
+  if(sel) t+=', selected';
+  if(chk) t+=', in check';
+  if(lg){ t+= lg.capture?', capture available':', move available'; if(lg.promo) t+=', promotes'; }
+  if(lm) t+= S.lastMove.from===s?', last move from':', last move to';
+  return t;
+}
+function squareHTML(s,row,col,pos){
+  var x=fr(s),light=(x[0]+x[1])%2===1;
+  var lm=!!(S.lastMove&&(S.lastMove.from===s||S.lastMove.to===s));
+  var pc=pos[s],sel=S.selected===s,lg=S.legal.filter(function(m){return m.to===s;})[0],chk=S.check===s;
+  var inner='';
+  if(chk) inner+='<span class="chk-tint"></span>';
+  if(col===0) inner+='<span class="crd rank" aria-hidden="true">'+(x[1]+1)+'</span>';
+  if(row===7) inner+='<span class="crd file" aria-hidden="true">'+s[0]+'</span>';
+  if(lm) inner+='<span class="lm-mark"></span>';
+  if(pc) inner+='<span class="pc '+(pc[0]==='w'?'pw':'pb')+'" aria-hidden="true">'+GLYPH[pc[1]]+'</span>';
+  if(sel) inner+='<span class="sel"></span>';
+  if(lg) inner+= lg.capture?'<span class="ring"></span>':'<span class="dot"></span>';
+  if(chk) inner+='<span class="badge" aria-hidden="true">+</span>';
+  return '<button class="sq '+(light?'light':'dark')+(lm?' lm':'')+'" data-sq="'+s+'" data-fk="sq-'+s+'" tabindex="'+(s===S.kb?0:-1)+
+    '" aria-label="'+squareLabel(s,pc,sel,lg,chk,lm)+'">'+inner+'</button>';
+}
+function boardHTML(){
+  var out=[],pos=displayPos();
+  for(var row=0;row<8;row++) for(var col=0;col<8;col++){
+    var f=S.side==='w'?col:7-col, r=S.side==='w'?7-row:row;
+    out.push(squareHTML(sq(f,r),row,col,pos));
+  }
+  return '<div class="board" role="group" aria-label="Chess board. You play '+sideName(S.side)+'.">'+out.join('')+'</div>';
+}
+function statusHTML(){
+  var icon,text,cls='';
+  if(S.hint){ icon='<span class="ic" aria-hidden="true">i</span>'; text=S.hint; }
+  else if(S.turn!==S.side){ icon='<span class="spin" aria-hidden="true"></span>'; text=S.check?'Check! Computer is thinking…':'Computer is thinking…'; }
+  else if(S.check){ icon='<span class="mini-badge" aria-hidden="true">+</span>'; text='Check! Your move'; cls=' err'; }
+  else { icon='<span class="turn-dot '+S.side+'" aria-hidden="true"></span>'; text='Your move'; }
+  return '<div class="g-status'+cls+'">'+icon+'<span class="t-title-m">'+text+'</span></div>';
+}
+function pairs(){
+  var out=[],no=S.startNo,cur=null;
+  S.moves.forEach(function(m,i){
+    if(m.c==='w'){ cur={no:no,w:m.san,b:null,wi:i,bi:-1}; out.push(cur); }
+    else {
+      if(cur && cur.no===no && cur.b===null && cur.w!==null){ cur.b=m.san; cur.bi=i; }
+      else { cur={no:no,w:null,b:m.san,wi:-1,bi:i}; out.push(cur); }
+      no++;
+    }
+  });
+  return out;
+}
+function movesHTML(){
+  var ps=pairs(),last=S.moves.length-1,inner;
+  if(ps.length){
+    inner=ps.map(function(p){
+      var w= p.w!==null?'<span class="ply'+(p.wi===last?' latest':'')+'">'+p.w+'</span>':'<span class="ply dim">…</span>';
+      var b= p.b!==null?'<span class="ply'+(p.bi===last?' latest':'')+'">'+p.b+'</span>':'';
+      var label='Move '+p.no+'.'+(p.w!==null?' White: '+sanSpeech(p.w)+'.':'')+(p.b!==null?' Black: '+sanSpeech(p.b)+'.':'');
+      return '<span class="pair" role="listitem" aria-label="'+label+'"><span class="no" aria-hidden="true">'+p.no+'.</span>'+w+b+'</span>';
+    }).join('');
+  } else inner='<span class="empty">No moves yet</span>';
+  return '<div class="g-moves"><h2 class="moves-h t-title-s">Moves</h2><div class="moves-list" role="list" aria-label="Moves">'+inner+'</div></div>';
+}
+function actionsHTML(){
+  return '<div class="g-actions">'+
+    '<button class="act" data-act="undo" data-fk="act-undo"'+(canUndo()?'':' disabled')+'><span class="ai" aria-hidden="true">↶</span><span>Undo</span></button>'+
+    '<button class="act" data-act="resign" data-fk="act-resign"><span class="ai" aria-hidden="true">⚑</span><span>Resign</span></button>'+
+    '<button class="act" data-act="newgame" data-fk="act-new"><span class="ai" aria-hidden="true">+</span><span>New game</span></button></div>';
+}
+function resultHTML(){
+  var r=RESULTS[S.over],n=fullmovesPlayed(),icon=r.icon,cls='';
+  if(S.over==='mate_win'){icon=GLYPH.K;cls=S.side==='w'?'pw':'pb';}
+  if(S.over==='mate_loss'){icon=GLYPH.K;cls=S.side==='w'?'pb':'pw';}
+  return '<section class="g-result" aria-labelledby="res-title">'+
+    '<div class="res-head"><span class="res-icon '+cls+'" aria-hidden="true">'+icon+'</span><h2 id="res-title" class="t-title-m" tabindex="-1">'+r.title+'</h2></div>'+
+    (r.expl?'<p class="t-body-m">'+r.expl+'</p>':'')+
+    '<p class="t-body-s meta">Level '+S.level+' · '+LEVELS[S.level][0]+' · '+n+(n===1?' move':' moves')+'</p>'+
+    '<div class="res-actions"><button class="btn filled" data-act="newgame" data-fk="res-new">New game</button>'+
+    (canUndo()?'<button class="btn outlined" data-act="undo" data-fk="res-undo">Undo</button>':'')+
+    '<button class="btn text" data-act="home" data-fk="res-home">Home</button></div></section>';
+}
+function gameHTML(){
+  return '<div class="game'+(S.over?' over':'')+'">'+
+    '<div class="g-top"><button class="icon-btn" data-act="home" data-fk="top-home" aria-label="Home"><span aria-hidden="true">←</span></button>'+
+    '<h1 class="t-title-l">Level '+S.level+' · '+LEVELS[S.level][0]+'</h1></div>'+
+    (S.over?'':statusHTML())+
+    '<div class="g-board">'+boardHTML()+'</div>'+
+    movesHTML()+
+    (S.over?resultHTML():actionsHTML())+
+    '</div>';
+}
+function subTop(title){
+  return '<div class="g-top"><button class="icon-btn" data-act="home" data-fk="top-home" aria-label="Back"><span aria-hidden="true">←</span></button><h1 class="t-title-l">'+title+'</h1></div>';
+}
+function statsHTML(){
+  var st=S.stats;
+  var rows=[1,2,3,4].map(function(n){var x=st.lvl[n]; return '<tr><th scope="row">'+n+' · '+LEVELS[n][0]+'</th><td>'+x.w+'</td><td>'+x.d+'</td><td>'+x.l+'</td></tr>';}).join('');
+  return '<div class="screen">'+subTop('Stats')+'<div class="sub-body">'+
+    '<h2 class="t-title-m">Games</h2><div class="ocard">'+
+    '<div class="kv"><span>Started</span><b>'+st.started+'</b></div><div class="kv"><span>Completed</span><b>'+st.completed+'</b></div><div class="kv"><span>Abandoned</span><b>'+st.abandoned+'</b></div></div>'+
+    '<p class="note">Started includes any game in progress.</p>'+
+    '<h2 class="t-title-m">Results by level</h2><div class="ocard"><table class="tbl"><thead><tr><th scope="col">Level</th><th scope="col">Won</th><th scope="col">Drawn</th><th scope="col">Lost</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    (st.completed>0?'':'<p class="note">Finish a game to see results here.</p>')+
+    '<div><button class="btn outlined danger-text" data-act="reset" data-fk="stats-reset">Reset stats</button></div>'+
+    '<p class="note">Stats are stored only on this device.</p></div></div>';
+}
+function aboutHTML(){
+  return '<div class="screen">'+subTop('About')+'<div class="sub-body">'+
+    '<p class="t-title-l">Chess</p><p>Version 1.0.0 (1)</p>'+
+    '<h2 class="t-title-m">Privacy</h2><p>This app works fully offline. It has no internet access and collects no data. Your games and stats stay on this device.</p>'+
+    '<h2 class="t-title-m">Credits</h2><p>Chess pieces by Colin M.L. Burnett (Cburnett), used under the BSD 3-clause licence.</p>'+
+    '<details><summary>View licence</summary><p class="note">The full BSD 3-clause notice, copied word for word from the Wikimedia Commons file pages, goes here (spec section 6.3).</p></details>'+
+    '<details><summary>Open-source licences</summary><p class="note">A generated list of bundled libraries, each opening its full licence text.</p></details>'+
+    '</div></div>';
+}
+function dialogHTML(t,b,confirm,kind){
+  return '<div class="scrim dialog-scrim" data-act="dlg-cancel" data-kind="'+kind+'"></div>'+
+    '<div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t" aria-describedby="dlg-b"><h2 id="dlg-t">'+t+'</h2><p id="dlg-b">'+b+'</p>'+
+    '<div class="dlg-actions"><button class="btn text" data-act="dlg-cancel" data-kind="'+kind+'" data-fk="dlg-cancel">Cancel</button>'+
+    '<button class="btn text danger" data-act="dlg-confirm" data-kind="'+kind+'" data-fk="dlg-confirm">'+confirm+'</button></div></div>';
+}
+function promoHTML(){
+  var c=S.side==='w'?'pw':'pb';
+  var opts=[['Q','Queen'],['R','Rook'],['B','Bishop'],['N','Knight']].map(function(o){
+    return '<button class="promo-opt" data-act="promo" data-piece="'+o[0]+'" data-fk="promo-'+o[0]+'"><span class="pc '+c+'" aria-hidden="true">'+GLYPH[o[0]]+'</span><span>'+o[1]+'</span></button>';
+  }).join('');
+  return '<div class="scrim dialog-scrim" data-act="promo-cancel"></div>'+
+    '<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="promo-t"><h2 id="promo-t">Promote pawn to</h2><div class="promo-grid">'+opts+'</div>'+
+    '<div class="dlg-actions"><button class="btn text" data-act="promo-cancel" data-fk="promo-cancel">Cancel</button></div></div>';
+}
+function sheetHTML(){
+  var sd=S.sheet;
+  function sideRow(v,label,extra){
+    return '<label class="radio-row"><input type="radio" name="side" value="'+v+'"'+(sd.side===v?' checked':'')+' data-fk="side-'+v+'"><span class="rl">'+label+(extra||'')+'</span>'+
+      (v!=='r'?'<span class="pc '+(v==='w'?'pw':'pb')+' ri" aria-hidden="true">'+GLYPH.K+'</span>':'')+'</label>';
+  }
+  function lvlRow(n){
+    return '<label class="radio-row two"><input type="radio" name="level" value="'+n+'"'+(sd.level===n?' checked':'')+' data-fk="lvl-'+n+'"><span class="rl">'+n+' · '+LEVELS[n][0]+'<small>'+LEVELS[n][1]+'</small></span></label>';
+  }
+  return '<div class="scrim" data-act="sheet-close"></div><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">'+
+    '<div class="handle" aria-hidden="true"></div><div class="sheet-body"><h2 id="sheet-t" class="t-title-l">New game</h2>'+
+    '<fieldset><legend>Play as</legend>'+sideRow('w','White')+sideRow('b','Black')+sideRow('r','Random','<small>Picked when the game starts</small>')+'</fieldset>'+
+    '<fieldset><legend>Computer level</legend>'+[1,2,3,4].map(lvlRow).join('')+'</fieldset></div>'+
+    '<div class="sheet-foot"><button class="btn filled block" data-act="play" data-fk="play">Play</button></div></section>';
+}
+function overlayHTML(){
+  var h='';
+  if(S.sheet) h+=sheetHTML();
+  if(S.dialog==='abandon') h+=dialogHTML('Abandon current game?','Your game in progress will end and count as abandoned in your stats.','Abandon','abandon');
+  if(S.dialog==='resign') h+=dialogHTML('Resign this game?','The computer wins. This counts as a loss at Level '+S.level+'.','Resign','resign');
+  if(S.dialog==='reset') h+=dialogHTML('Reset stats?','All counts go back to 0. This can\'t be undone.','Reset','reset');
+  if(S.dialog==='promo') h+=promoHTML();
+  return h;
+}
+function render(){
+  var ae=document.activeElement,key=null;
+  if(ae && ae.dataset && ae.dataset.fk && phone.contains(ae)) key=ae.dataset.fk;
+  var html= S.screen==='home'?homeHTML(): S.screen==='game'?gameHTML(): S.screen==='stats'?statsHTML(): aboutHTML();
+  screenEl.innerHTML=html;
+  overlayEl.innerHTML=overlayHTML();
+  screenEl.inert=!!(S.sheet||S.dialog);
+  var ml=screenEl.querySelector('.moves-list');
+  if(ml){ ml.scrollLeft=ml.scrollWidth; ml.scrollTop=ml.scrollHeight; }
+  var target=null;
+  if(S.focus){ target=document.querySelector(S.focus); S.focus=null; }
+  else if(key){ target=document.querySelector('[data-fk="'+key+'"]'); }
+  if(target && !target.disabled) target.focus({preventScroll:true});
+}
+
+/* ---------------- Prototype controls ---------------- */
+function scriptedSavedGame(){
+  initState(); log.innerHTML='';
+  startGame('w',2,{silent:true,noAI:true});
+  [['e2','e4'],['e7','e5'],['g1','f3'],['b8','c6']].forEach(function(p){
+    var m=legalFrom(S.pos,p[0]).filter(function(x){return x.to===p[1];})[0];
+    doMove(m,null,S.turn===S.side?'You':'Computer',{silent:true,noAI:true,noRender:true});
+  });
+  S.screen='home'; render();
+}
+function promoScenario(){
+  clearTimeout(S.timer);
+  if(!S.active || S.over) S.stats.started++;
+  Object.assign(S,{active:true,side:'w',level:2,pos:promoPos(),turn:'w',lastMove:{from:'b8',to:'b2'},check:null,
+    moves:[{san:'Rb2',c:'b'}],startNo:33,startColor:'b',history:[],over:null,recorded:null,selected:null,legal:[],
+    thinking:false,held:null,pendingPromo:null,dialog:null,sheet:null,screen:'game',kb:'e7',hint:null});
+  announce('Scenario: move 34, White to move. Your pawn on e7 can promote.');
+  S.focus='[data-sq="e7"]'; render();
+}
+function previewResult(key){
+  if(S.screen!=='game' || !S.active){ if(!S.active) startGame('w',2,{silent:true,noAI:true}); S.screen='game'; }
+  clearTimeout(S.timer); S.thinking=false; S.held=null; S.dialog=null; S.sheet=null; S.pendingPromo=null;
+  unrecord(); S.over=key; S.recorded=null; S.selected=null; S.legal=[];
+  announce(RESULTS[key].title+'.'); S.focus='#res-title'; render();
+}
+function control(name){
+  if(name==='reset'){ initState(); log.innerHTML=''; hideSnack(); render(); }
+  else if(name==='saved'){ scriptedSavedGame(); }
+  else if(name==='promo'){ promoScenario(); }
+  else if(name==='corrupt'){ S.corrupt=true; S.screen='home'; S.sheet=null; S.dialog=null; render(); addLog("(banner) Couldn't restore your last game"); }
+  else if(name==='storage'){ showSnack("Can't save this game: storage is full. Free up space to keep it safe.",8000,'OK'); }
+}
+
+/* ---------------- Events ---------------- */
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-act],[data-sq],[data-ctl]');
+  if(!el || el.tagName==='INPUT' || el.tagName==='SELECT') return;
+  if(el.dataset.sq){ S.kb=el.dataset.sq; handleSquare(el.dataset.sq); return; }
+  if(el.dataset.ctl){ control(el.dataset.ctl); return; }
+  var a=el.dataset.act;
+  switch(a){
+    case 'continue':
+      S.screen='game'; S.kb=S.kb||topLeft();
+      announce('Game resumed. Move '+fullmoveNow()+'. '+(S.turn===S.side?'Your move.':'Computer is thinking.'));
+      S.focus='[data-sq="'+S.kb+'"]'; render();
+      if(S.turn!==S.side && !S.over && !S.thinking) computerTurn();
+      break;
+    case 'new': openSheet('home'); break;
+    case 'newgame': openSheet('game'); break;
+    case 'stats': S.screen='stats'; S.focus='[data-fk="top-home"]'; render(); break;
+    case 'about': S.screen='about'; S.focus='[data-fk="top-home"]'; render(); break;
+    case 'home': goHome(); break;
+    case 'banner-ok': S.corrupt=false; S.focus='[data-fk="home-new"]'; render(); break;
+    case 'undo': undo(); break;
+    case 'resign': if(inProgress()){ S.dialog='resign'; S.focus='[data-fk="dlg-cancel"]'; render(); } break;
+    case 'play': play(); break;
+    case 'sheet-close': closeSheet(); break;
+    case 'dlg-cancel': dialogCancel(el.dataset.kind); break;
+    case 'dlg-confirm': dialogConfirm(el.dataset.kind); break;
+    case 'promo': completePromo(el.dataset.piece); break;
+    case 'promo-cancel': cancelPromo(); break;
+    case 'reset': S.dialog='reset'; S.focus='[data-fk="dlg-cancel"]'; render(); break;
+    case 'snack-ok': hideSnack(); break;
+    case 'nav-back': back(); break;
+  }
+});
+document.addEventListener('change',function(e){
+  var t=e.target;
+  if(t.name==='side' && S.sheet) S.sheet.side=t.value;
+  if(t.name==='level' && S.sheet) S.sheet.level=Number(t.value);
+  if(t.dataset.ctl==='result' && t.value){ previewResult(t.value); t.value=''; }
+  if(t.dataset.ctl==='dark') phone.classList.toggle('dark',t.checked);
+  if(t.dataset.ctl==='land'){ phone.classList.toggle('landscape',t.checked); render(); }
+});
+function moveKb(s,key){
+  var x=fr(s),row=S.side==='w'?7-x[1]:x[1],col=S.side==='w'?x[0]:7-x[0];
+  if(key==='ArrowUp') row=Math.max(0,row-1);
+  if(key==='ArrowDown') row=Math.min(7,row+1);
+  if(key==='ArrowLeft') col=Math.max(0,col-1);
+  if(key==='ArrowRight') col=Math.min(7,col+1);
+  var ns=sq(S.side==='w'?col:7-col, S.side==='w'?7-row:row);
+  S.kb=ns;
+  document.querySelectorAll('.sq').forEach(function(b){b.tabIndex=b.dataset.sq===ns?0:-1;});
+  var el=document.querySelector('[data-sq="'+ns+'"]'); if(el) el.focus();
+}
+document.addEventListener('keydown',function(e){
+  var t=e.target;
+  if(t.dataset && t.dataset.sq && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.key)>=0){ e.preventDefault(); moveKb(t.dataset.sq,e.key); return; }
+  if(e.key==='Escape'){
+    if(S.dialog||S.sheet){ e.preventDefault(); back(); }
+    else if(S.selected){ S.selected=null; S.legal=[]; announce('Selection cleared.'); render(); }
+    return;
+  }
+  if((e.ctrlKey||e.metaKey) && (e.key==='z'||e.key==='Z') && S.screen==='game' && !S.dialog && !S.sheet){ e.preventDefault(); undo(); }
+});
+
+initState(); render();
+})();
+</script>
+</body>
+</html>
