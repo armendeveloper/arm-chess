@@ -67,6 +67,61 @@
     <string name="action_new_game">New game</string>
     <string name="action_moves">Moves</string>
 
+    <!-- Board squares for TalkBack (design §5.3). Coordinates such as "e4" stay in Latin letters in
+         every language; they are notation. Piece names are whole phrases per colour and piece, so a
+         translation can make the adjective agree with the noun. -->
+    <!-- Square description: %1$s is the coordinate ("e4"), %2$s is a piece name or "empty". -->
+    <string name="a11y_square">%1$s, %2$s</string>
+    <!-- Adds one state phrase to a square description: %1$s is the description so far, %2$s the
+         state phrase. Applied once per state, in this order: selected, in check, target, last move. -->
+    <string name="a11y_square_with_state">%1$s, %2$s</string>
+    <string name="a11y_square_empty">empty</string>
+    <string name="a11y_piece_white_king">white king</string>
+    <string name="a11y_piece_white_queen">white queen</string>
+    <string name="a11y_piece_white_rook">white rook</string>
+    <string name="a11y_piece_white_bishop">white bishop</string>
+    <string name="a11y_piece_white_knight">white knight</string>
+    <string name="a11y_piece_white_pawn">white pawn</string>
+    <string name="a11y_piece_black_king">black king</string>
+    <string name="a11y_piece_black_queen">black queen</string>
+    <string name="a11y_piece_black_rook">black rook</string>
+    <string name="a11y_piece_black_bishop">black bishop</string>
+    <string name="a11y_piece_black_knight">black knight</string>
+    <string name="a11y_piece_black_pawn">black pawn</string>
+    <string name="a11y_state_selected">selected</string>
+    <!-- Only on a king's square. -->
+    <string name="a11y_state_in_check">in check</string>
+    <!-- Legal destinations of the selected piece. -->
+    <string name="a11y_target_move">move available</string>
+    <string name="a11y_target_castling">move available, castling</string>
+    <string name="a11y_target_promotion">move available, promotes</string>
+    <string name="a11y_target_capture">capture available</string>
+    <string name="a11y_target_en_passant">capture available, en passant</string>
+    <string name="a11y_target_capture_promotion">capture available, promotes</string>
+    <string name="a11y_state_last_move_from">last move from</string>
+    <string name="a11y_state_last_move_to">last move to</string>
+    <!-- Click labels: TalkBack says "Double-tap to …". -->
+    <string name="a11y_click_select">select</string>
+    <string name="a11y_click_deselect">deselect</string>
+    <string name="a11y_click_move">move here</string>
+    <string name="a11y_click_capture">capture</string>
+    <!-- Custom actions on a piece (design §5.3). %1$s is the destination square ("f3"). The
+         captured piece is part of each phrase, so a translation can use the right grammatical case. -->
+    <string name="a11y_action_move">Move to %1$s</string>
+    <string name="a11y_action_take_pawn">Take pawn on %1$s</string>
+    <string name="a11y_action_take_knight">Take knight on %1$s</string>
+    <string name="a11y_action_take_bishop">Take bishop on %1$s</string>
+    <string name="a11y_action_take_rook">Take rook on %1$s</string>
+    <string name="a11y_action_take_queen">Take queen on %1$s</string>
+    <string name="a11y_action_en_passant">Take pawn en passant on %1$s</string>
+    <string name="a11y_action_castle_kingside">Castle kingside</string>
+    <string name="a11y_action_castle_queenside">Castle queenside</string>
+    <string name="a11y_action_promote">Move to %1$s and promote</string>
+    <string name="a11y_action_take_knight_promote">Take knight on %1$s and promote</string>
+    <string name="a11y_action_take_bishop_promote">Take bishop on %1$s and promote</string>
+    <string name="a11y_action_take_rook_promote">Take rook on %1$s and promote</string>
+    <string name="a11y_action_take_queen_promote">Take queen on %1$s and promote</string>
+
     <!-- D2 Resign -->
     <string name="resign_title">Resign this game?</string>
     <string name="resign_body">The computer wins. This counts as a loss at Level %1$d.</string>
