@@ -662,7 +662,7 @@ flowchart LR
 | Check | Value | Date |
 |---|---|---|
 | Perft gate wall time (T-5) | Gate (`:engine:test --tests "chess.engine.perft.*"`, all 7 positions, about 17.0 M leaf nodes): **0.94 s** in JUnit, 8.6 s wall clock including Gradle. Release depths (`:engine:perftDeep`, about 609 M leaf nodes): **25.2 s** in JUnit, 27 s wall clock (a first run with a parallel build on the machine took 49.2 s / 72 s). Dev machine, JDK 21, bulk counting at depth 1. | 2026-10-14 |
-| JVM search speed, nodes per second (T-8) | | |
+| JVM search speed, nodes per second (T-8) | **About 1.7 M nodes/s** (`:engine:searchBench`: 8 positions × level 4's 1.5 M-node budget, full quiescence, after JIT warm-up; 12.0 M nodes in 6.94 s). By position: 1.2 M (position 4) to 2.25 M (start). A first run on a loaded machine gave 1.25 M. So one level-4 search takes about 0.7–1.3 s on this JVM, and start-position searches reach depth 8. Dev machine, JDK 21. The default `:engine:test` also logs a short 1 M-node sample (about 1.9 M nodes/s). | 2026-10-14 |
 | Strength match L2/L1, L3/L2, L4/L3, L4/L1 (T-10) | | |
 | Reference device p95 per level, deadline-stop share (T-11) | | |
 | Level-4 node budget chosen (T-11) | | |

@@ -993,3 +993,123 @@ At first the mapper masked the turn-guard mutation, because the status shows "th
 - T-23: `GameLayout` takes over the board sizing from the simple column.
 - T-24: announcements go in the status row's live region (the `StatusRowTestTag` node), as event plus status sentences.
 - The scratchpad directory is shared with parallel agents; another agent's script replaced one of my files there. Keep throwaway scripts under the worktree's ignored `build/` folder instead.
+
+## 2026-10-14 — T-8: Evaluation and search (iterative deepening, alpha-beta, quiescence, transposition table, stop)
+
+**Stories:** US-6.
+
+### What changed and why
+- **New package `chess.engine.search`** (`:engine` only, Kotlin stdlib only, no coroutines; ADR-1, ADR-6). `app/`, SAN/UCI and `Game.replay` are not touched (T-14 and T-7 run in parallel). No `Board`, `Position` or `Game` signature changed.
+- **`Engine`** (public) is the API of design §4.6, as written: `Engine(ttEntriesLog2 = 18)`, `newGame()`, and `search(game, params, random, nanoTime = System::nanoTime, shouldStop = { false }): SearchResult`. `SearchResult(move, scoreCp, depth, nodes, elapsedMs, stopReason)` and `StopReason { DepthCap, NodeBudget, Deadline, Cancelled, OnlyMove }` are unchanged. Additions: `Engine.CHECK_INTERVAL = 1024`, `SearchResult.MATE_SCORE = 32000`, and `SearchResult.mateInPlies` (positive when the side to move mates, negative when it is mated, else null).
+  - It throws `IllegalArgumentException` unless `game.status == Ongoing`.
+  - `random` is accepted but not used yet. T-9's level randomisation will use it, and the search itself is deterministic.
+  - With one legal move, it returns at once (`OnlyMove`, depth 0, 0 nodes).
+- **`LevelParams`** (public): `depthCap` (1..64), `nodeBudget`, `timeCapMs: Long?` (the PRD cap, or null for no deadline), and `quiescence`. `deadlineMs` = cap − 100 ms (`DEADLINE_MARGIN_MS`, ADR-3). `withoutDeadline()` is for matches. **`Quiescence`** (public): `Off` (level 1), `CapturesOnly(maxPlies)` (level 2) and `Full` (levels 3 and 4). `Levels.params(level)` and randomisation are left for T-9.
+- **`Eval`** (internal). It covers material (100/320/330/500/900) and the tapered middlegame/endgame PSTs in `Pst.kt`, with phase N 1, B 1, R 2, Q 4 out of 24. It adds a bishop pair (30) and tempo (10). Mop-up applies when one side has only its king and the other has at least a rook's worth of pieces: `10 × lone king's centre distance + 4 × (14 − king distance)`. A side with no pawns and at most one minor piece never scores above 0, so K+B v K, K+N v K and K+B v K+B evaluate as 0. The eval does not allocate. Table provenance is recorded in `docs/licences/eval-tables.md` (new; design §4.5 asks for it).
+- **`Search`** (internal):
+  - Negamax alpha-beta with iterative deepening, and quiescence (stand-pat, MVV-LVA, a 200 cp delta-pruning margin; captures, plus queen promotions in `Full`).
+  - A +1 check extension, and move ordering (`Ordering.kt`): TT move, then MVV-LVA captures and promotions, then 2 killers per ply, then history.
+  - It uses preallocated per-ply buffers and the mutable board from `Position.toBoard()`.
+  - **Draws inside the search score 0.** That covers a position seen before since the last pawn move or capture, on the search path or in the game's history (`Board.key` / `Position.repetitionKey`; twofold counts). It also covers the 50-move rule (unless the side to move is mated, so a mate on the 100th halfmove wins), stalemate, and `Draws.isInsufficientMaterial(board)`.
+  - **Stop.** The node budget, the deadline (`nanoTime() − start >= cap − 100 ms`) and `shouldStop` are checked every 1,024 nodes. The budget and deadline are also checked before each new iteration. `shouldStop` is honoured at once, even during depth 1 (→ `Cancelled`, still a legal move). The budget and deadline are ignored until depth 1 has completed, so depth 1 always completes.
+  - **Partial iterations.** The previous best move is searched first. If the search stops mid-iteration after another move has beaten it, that move and its score are used. Otherwise the last completed iteration's move is kept. The reported depth is always the last completed one.
+  - A proven mate (mate distance ≤ completed depth) ends the search early, reported as `DepthCap`.
+- **`TranspositionTable`** (internal): 2^18 entries in two `LongArray`s (key, packed data), 4 MiB.
+  - The data word packs move (19 bits), score (16), depth (8), bound (2) and search generation (6).
+  - Buckets of two slots. The first is depth-preferred: it is replaced only by an entry at least as deep, by the same key, or when its entry is from an earlier search. The second is always replaced.
+  - Mate scores are stored relative to the node (+ply) and loaded relative to the root (−ply).
+  - `newGame()` clears it, along with killers and history. History is halved between searches.
+- **`:engine:searchBench`** (new `Test` task, JUnit category `chess.engine.SearchBench`, excluded from `test` like `perftDeep`) measures nodes per second at level 4's 1.5 M-node budget over 8 positions.
+
+### Files touched
+`engine/src/main/kotlin/chess/engine/search/{Engine,Search,Eval,Pst,TranspositionTable,Ordering,LevelParams}.kt` (new), `engine/src/test/kotlin/chess/engine/search/{SearchTestSupport,EvalTest,TranspositionTableTest,SearchTest,EngineTest,SearchBenchTest}.kt` (new), `engine/src/test/kotlin/chess/engine/SearchBench.kt` (new, category marker), `engine/build.gradle.kts` (exclude `SearchBench` from `test`; `searchBench` task), `docs/licences/eval-tables.md` (new), `docs/product/chess-vs-computer/04-plan.md` (Results row), this log.
+
+### Tests added (written first, seen failing)
+Red: with the tests written and no `search` package, `:engine:test` failed to compile (276 unresolved references). On the first green run, 2 of 46 new tests failed because of my own test data: an invalid en passant FEN, and expecting R v B to be worth more than 300. Both were fixed in the tests; the code did not change. The default `:engine:test` now runs **249 tests** (T-6: 198; +51), plus `SearchBenchTest` in `searchBench` only.
+- `EvalTest` (8):
+  - **`eval(p) == −eval(mirror(p))` from White's view, and equal from the side to move's view, over 57 positions.** These are the 7 perft FENs, 8 hand-picked positions and 42 from seeded random play.
+  - The start position is worth exactly the tempo bonus. Material dominates.
+  - K+B v K, K+N v K and K+B v K+B score 0, but a pawn keeps the winning chances.
+  - Mop-up values, including that it switches off when the defender has a pawn. The corner beats the centre, and close kings beat distant ones.
+  - Endgame vs middlegame king tables.
+- `TranspositionTableTest` (8): store/probe round trip; a miss on a different key; **mate scores ply-adjusted (stored at ply 3, loaded at ply 7 and ply 1; also mated scores)**; depth-preferred vs always-replace slots; aging by search generation; re-storing a key keeps its old move when the new one is `NONE`; `clear`; the default size is 2^18.
+- `SearchTest` (23):
+  - **Mates.** An independent brute-force prover (`hasForcedMate` in `SearchTestSupport`) first checks every mate position. **Mate in 1 (5 positions) and mate in 2 (3) are found at depth 4, and mate in 3 at depth 6.** The score is exactly `MATE − plies`, and the move is verified to force mate. The side being mated sees `−(MATE − 2)`. The check extension finds a checking mate in 2 at depth 2. A mate on the 100th halfmove beats the 50-move draw.
+  - **Material.** It takes a hanging queen and a free rook. **It does not leave the queen en prise in 5 positions at 50 k nodes.** A queen is en prise if a cheaper piece can take it, or if it is taken while undefended.
+  - **Quiescence.** With `Off`, depth 1 grabs a pawn defended by a pawn. With `Full`, it doesn't. `CapturesOnly(1)` stops a winning R×d5 sequence too early, and `CapturesOnly(64)` matches `Full`.
+  - **Draws.** The winning side never stalemates (K+Q v K with two stalemating queen moves). Capturing into K+B v K scores 0. With the halfmove clock at 99 it plays a pawn move. **It avoids a threefold when 3 pawns ahead** (the natural Ng1-f3 would complete it), at depths 1–4. The losing side takes a repetition and scores 0.
+  - **TT.** **With and without the TT, the move and score are identical at depths 1–4 in 10 positions, and the TT never costs nodes.**
+  - **Iterative deepening.** Each iteration searches the previous best move first. **A search stopped by its node budget right after a later root move beat the previous best keeps that improvement.** The `RootMoveListener` test hook records an iteration, then the test reruns with a budget that lands in it.
+  - **Determinism.** The same search gives the same result. `newGame()` resets to a fresh engine's result. The `Random` passed in does not change the result.
+- `EngineTest` (12):
+  - A finished game is rejected (mate, stalemate, threefold). An only move returns at once.
+  - The depth cap. **The node budget is respected within 1,024** (3 positions). **`shouldStop` is honoured within 1,024**: flipped on its 5th poll, the search stops at 4,097–5,120 nodes. Cancelling during depth 1 still returns a legal move (7 positions).
+  - **With a fake `nanoTime` whose deadline has already passed, it returns the legal depth-1 move** (7 positions). **Depth 1 completes even when its own stop checks see the budget or deadline passed:** a position whose depth 1 takes more than 2,048 nodes gives exactly the depth-1 result.
+  - Deadline = cap − 100 ms: with a 300 ms cap and a fake clock advancing 1 ms per reading, it stops at 200–202 ms.
+  - `LevelParams` validation.
+  - **Every returned move is legal across 500 random positions** (seeded; 1,000-node budget; `newGame` every 50).
+  - **It logs nodes per second** (about 1 M nodes; line `T-8 JVM search speed: …`).
+
+**Mutation checks.** Each mutation was applied by a scratch script, then reverted, and `grep -rn MUTATION engine/` finds nothing. Every one fails at least one test:
+- No repetition: 2 tests fail.
+- No 50-move rule: 1.
+- 50-move checked before mate: 1.
+- Stalemate scored as mate: 1.
+- Budget/deadline enforced during depth 1: 1.
+- No insufficient-material draw (search and eval): 2.
+- TT cut-off on entries 2 plies too shallow: 3.
+- No check extension: 2.
+- Partial-iteration improvement ignored: 1.
+- Black PSTs not mirrored: 4.
+- No mop-up: 1.
+
+The first round left 4 survivors (depth 1, check extension, partial iteration, mop-up). The depth-1, check-extension, partial-iteration and mop-up-value tests above were added for them.
+
+### Search speed
+`./gradlew :engine:searchBench`, 8 positions × 1.5 M nodes (level 4's provisional budget), full quiescence, after warm-up:
+
+| Position | Run 1 (loaded machine) | Run 2 | Depth | Move |
+|---|---|---|---|---|
+| start | 2.11 M/s | 2.25 M/s | 8 | e2e4 |
+| Kiwipete | 2.13 M/s | 1.92 M/s | 6 | e2a6 |
+| position 3 | 1.05 M/s | 1.76 M/s | 9 | b4f4 |
+| position 4 | 0.80 M/s | 1.20 M/s | 8 | c4c5 |
+| position 5 | 0.83 M/s | 1.67 M/s | 7 | d7c8q |
+| position 6 | 1.00 M/s | 1.96 M/s | 6 | c3d5 |
+| Italian | 1.69 M/s | 1.66 M/s | 6 | e1g1 |
+| K+P endgame | 2.15 M/s | 1.83 M/s | 16 | c3c4 |
+| **Total** | **1.25 M/s** (9.62 s) | **1.73 M/s** (6.94 s) | | |
+
+Both runs chose the same moves and reached the same depths (deterministic). Run 1 shared the machine with other agents' builds. The plan's Results table records about 1.7 M nodes/s. For T-10: one level-4 move takes about 0.7–1.3 s on this JVM, so a 100-game L4 pairing of about 60 moves a side runs about 2–3 hours of CPU. Across 8 cores, that is roughly 15–25 minutes, in line with design §4.7.
+
+### Commands run
+- Setup: `local.properties` written with the Write tool and checked with `od -c`. It has double backslashes; a first `printf` attempt collapsed them, as previous agents found.
+- Baseline: `./gradlew :engine:test` → BUILD SUCCESSFUL, 198 tests.
+- Red: `./gradlew :engine:test` → compilation FAILED (276 unresolved references), as expected.
+- `./gradlew :engine:test` → first green run, 244 tests, 2 failed (test data, above). After the fixes, BUILD SUCCESSFUL. After adding the mutation-driven tests: **249 tests, 0 failures**.
+- Mutation runs: `./gradlew :engine:test --tests "chess.engine.search.*"`, once per mutation, from a scratch script → FAILED as listed above. Sources were restored after each run.
+- `./gradlew :engine:searchBench` twice → BUILD SUCCESSFUL, 1 test (timings above).
+- GATE (final tree): `./gradlew --rerun-tasks :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL** in 2 min 31 s, 61 tasks executed. An earlier GATE run on an almost-final tree also passed (1 min 47 s).
+  - `:engine:test`: **249 tests, 0 failures, 0 skipped**. Search suites: SearchTest 6.6 s, EngineTest 1.4 s, EvalTest 0.3 s, TranspositionTableTest 0.1 s, run in parallel with the app's tasks. Run alone, `:engine:test` takes them about 4 s in total. The NPS line read 1.88 M nodes/s.
+  - `:app:testDebugUnitTest`: 29 tests, 0 failures.
+  - Lint: 0 errors, 87 warnings (86 `UnusedResources`, 1 `OldTargetApi`), all in `:app`, which T-8 does not touch.
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+- The three slowest search tests were trimmed after the first GATE: the 500-position budget went from 1,500 to 1,000 nodes, the deadline test now uses a 300 ms cap, and the depth-1 position is fixed instead of chosen from 200 random games. What each test checks is unchanged. The depth-1 mutation was re-run against the trimmed test and still fails it.
+
+### Deviations from the plan
+- **Additions to the §4.6 API:** `Engine.CHECK_INTERVAL`, `SearchResult.MATE_SCORE` and `SearchResult.mateInPlies`. Nothing in §4.6 was changed or removed.
+- **`random` is unused in T-8.** It is annotated `@Suppress("UNUSED_PARAMETER")` until T-9 uses it.
+- **`LevelParams`** has no randomisation field yet. T-9 can add one with a default without breaking callers. `timeCapMs = null` means "no deadline" (matches, tests).
+- **`shouldStop` is polled only by the 1,024-node check, not between iterations.** The budget and deadline are also checked between iterations. That makes `shouldStop` polls exactly countable in tests.
+- **Proven mates end the search early** and report `DepthCap`, because §4.6's enum has no "mate found" reason.
+- **The search's insufficient-material check** uses the PRD list (`Draws`). Separately, the eval gives no credit to a side with no pawns and at most one minor piece (so K+N v K+N, which the rules don't call drawn, evaluates as 0 too).
+- **Quiescence** does not search check evasions (stand-pat even in check), and it only searches queen promotions. Both are common simplifications.
+- **The TT is not cleared automatically on undo.** The design says to clear it on undo, so the caller must call `newGame()` after an undo (T-19, `EngineAiPlayer`). This is documented on `Engine`.
+- **Extra files and tasks:** `SearchTestSupport.kt` (including an independent brute-force mate prover), `SearchBenchTest.kt` with its `SearchBench` category and `searchBench` task, `docs/licences/eval-tables.md`, and an internal `RootMoveListener` test hook on `Search` (null in production).
+- **Mate in 3** and the extra draw, quiescence and iteration tests go beyond the plan's list (the caller asked for them).
+
+### Follow-ups
+- T-9: `Levels.params(level)` per ADR-3. Add randomisation (using the `random` argument) and exact root scores at the final depth via a lowered-alpha root window. The root loop in `Search.run` is the place, and `RootMoveListener` shows the per-move root scores.
+- T-19: call `Engine.newGame()` on new game **and after undo** (design §4.6).
+- T-10/T-11: the JVM speed is about 1.7 M nodes/s; the level-4 budget will be set from the device.
+- Release review (T-26/T-27): decide whether the About screen should credit the Simplified Evaluation Function (`docs/licences/eval-tables.md`).
