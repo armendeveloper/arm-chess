@@ -2,3 +2,5 @@
 gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+# Raw resources ship inside the APK byte-for-byte; keep them LF on every OS.
+app/src/main/res/raw/** text eol=lf
