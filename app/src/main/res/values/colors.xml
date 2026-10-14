@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- M3 `surface` from the light scheme in ui/theme/Color.kt; behind the splash and the first frame. -->
+    <color name="window_background">#FFFFF8F5</color>
+</resources>

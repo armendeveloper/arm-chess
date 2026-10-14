@@ -1,4 +1,137 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Copy deck: design 02-design.md §4.10. Separator is " · " (U+00B7), ellipsis is "…" (U+2026). -->
 <resources>
     <string name="app_name">Arm Chess</string>
+
+    <!-- S1 Home -->
+    <string name="home_tagline">Play the computer. Offline, no account, no ads.</string>
+    <string name="home_in_progress_title">Game in progress</string>
+    <string name="home_in_progress_meta">Level %1$d · %2$s · You play %3$s</string>
+    <string name="home_turn_player">Move %1$d · Your move</string>
+    <string name="home_turn_computer">Move %1$d · Computer to move</string>
+    <string name="home_continue">Continue game</string>
+    <string name="home_new_game">New game</string>
+    <string name="home_stats">Stats</string>
+    <string name="home_about">About</string>
+    <string name="home_loading">Checking for a saved game…</string>
+    <string name="restore_failed_title">Couldn\'t restore your last game</string>
+    <string name="restore_failed_body">The saved game was damaged, so it was removed. Your stats aren\'t affected.</string>
+
+    <!-- Shared actions -->
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <!-- Content description of the top-bar back arrow on Stats, About and Licences (not in §4.10). -->
+    <string name="action_back">Back</string>
+
+    <!-- S2 New game sheet -->
+    <string name="new_game_title">New game</string>
+    <string name="new_game_side">Play as</string>
+    <string name="side_white">White</string>
+    <string name="side_black">Black</string>
+    <string name="side_random">Random</string>
+    <string name="side_random_hint">Picked when the game starts</string>
+    <string name="new_game_level">Computer level</string>
+    <string name="level_name_1">Beginner</string>
+    <string name="level_name_2">Casual</string>
+    <string name="level_name_3">Club</string>
+    <string name="level_name_4">Strong</string>
+    <string name="level_desc_1">Makes lots of mistakes. Good for learning.</string>
+    <string name="level_desc_2">Plays sensibly, but misses tactics.</string>
+    <string name="level_desc_3">Solid. Punishes careless moves.</string>
+    <string name="level_desc_4">Plays its best. Thinks for up to 4 seconds.</string>
+    <string name="level_label">Level %1$d · %2$s</string>
+    <string name="level_option">%1$d · %2$s</string>
+    <string name="new_game_play">Play</string>
+
+    <!-- D1 Abandon -->
+    <string name="abandon_title">Abandon current game?</string>
+    <string name="abandon_body">Your game in progress will end and count as abandoned in your stats.</string>
+    <string name="abandon_confirm">Abandon</string>
+
+    <!-- S3 Game -->
+    <string name="game_home">Home</string>
+    <string name="status_your_move">Your move</string>
+    <string name="status_check">Check! Your move</string>
+    <string name="status_thinking">Computer is thinking…</string>
+    <string name="status_thinking_check">Check! Computer is thinking…</string>
+    <string name="status_no_moves">No legal moves for that piece</string>
+    <string name="status_engine_error">The computer couldn\'t make a move.</string>
+    <string name="action_try_again">Try again</string>
+    <string name="status_loading">Loading game…</string>
+    <string name="you_play_white">You play White</string>
+    <string name="you_play_black">You play Black</string>
+    <string name="storage_full">Can\'t save this game: storage is full. Free up space to keep it safe.</string>
+    <string name="window_too_small">Make this window larger to play.</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_resign">Resign</string>
+    <string name="action_new_game">New game</string>
+    <string name="action_moves">Moves</string>
+
+    <!-- D2 Resign -->
+    <string name="resign_title">Resign this game?</string>
+    <string name="resign_body">The computer wins. This counts as a loss at Level %1$d.</string>
+    <string name="resign_confirm">Resign</string>
+
+    <!-- S5 Moves -->
+    <string name="moves_title">Moves</string>
+    <string name="moves_empty">No moves yet</string>
+
+    <!-- S4 Promotion picker -->
+    <string name="promo_title">Promote pawn to</string>
+    <string name="piece_queen">Queen</string>
+    <string name="piece_rook">Rook</string>
+    <string name="piece_bishop">Bishop</string>
+    <string name="piece_knight">Knight</string>
+
+    <!-- Result panel -->
+    <string name="result_mate_win">Checkmate. You win</string>
+    <string name="result_mate_loss">Checkmate. Computer wins</string>
+    <string name="result_stalemate">Draw by stalemate</string>
+    <string name="result_threefold">Draw by threefold repetition</string>
+    <string name="result_fifty">Draw by 50-move rule</string>
+    <string name="result_insufficient">Draw by insufficient material</string>
+    <string name="result_resigned">You resigned. Computer wins</string>
+    <string name="result_expl_mate_win">The computer\'s king is in check and has no legal moves.</string>
+    <string name="result_expl_mate_loss">Your king is in check and has no legal moves.</string>
+    <string name="result_expl_stalemate_computer">The computer has no legal moves, but its king isn\'t in check.</string>
+    <string name="result_expl_stalemate_player">You have no legal moves, but your king isn\'t in check.</string>
+    <string name="result_expl_threefold">The same position came up 3 times.</string>
+    <string name="result_expl_fifty">50 moves each without a capture or a pawn move.</string>
+    <string name="result_expl_insufficient">Neither side has enough pieces left to checkmate.</string>
+    <plurals name="result_meta">
+        <item quantity="one">Level %1$d · %2$s · %3$d move</item>
+        <item quantity="other">Level %1$d · %2$s · %3$d moves</item>
+    </plurals>
+    <string name="result_home">Home</string>
+
+    <!-- S6 Stats -->
+    <string name="stats_title">Stats</string>
+    <string name="stats_games">Games</string>
+    <string name="stats_started">Started</string>
+    <string name="stats_completed">Completed</string>
+    <string name="stats_abandoned">Abandoned</string>
+    <string name="stats_started_note">Started includes any game in progress.</string>
+    <string name="stats_by_level">Results by level</string>
+    <string name="stats_col_level">Level</string>
+    <string name="stats_col_won">Won</string>
+    <string name="stats_col_drawn">Drawn</string>
+    <string name="stats_col_lost">Lost</string>
+    <string name="stats_empty_hint">Finish a game to see results here.</string>
+    <string name="stats_reset">Reset stats</string>
+    <string name="stats_reset_title">Reset stats?</string>
+    <string name="stats_reset_body">All counts go back to 0. This can\'t be undone.</string>
+    <string name="stats_reset_confirm">Reset</string>
+    <string name="stats_reset_done">Stats reset</string>
+    <string name="stats_read_error">Couldn\'t read your stats, so they were reset to 0.</string>
+    <string name="stats_private">Stats are stored only on this device.</string>
+
+    <!-- S7 About and S7b Licences -->
+    <string name="about_title">About</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_privacy_heading">Privacy</string>
+    <string name="about_privacy_body">This app works fully offline. It has no internet access and collects no data. Your games and stats stay on this device.</string>
+    <string name="about_credits_heading">Credits</string>
+    <string name="about_pieces">Chess pieces by Colin M.L. Burnett (Cburnett), used under the BSD 3-clause licence.</string>
+    <string name="about_view_licence">View licence</string>
+    <string name="about_oss">Open-source licences</string>
 </resources>

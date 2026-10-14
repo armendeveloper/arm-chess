@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Window theme only. Compose draws everything with ArmChessTheme (ui/theme/Theme.kt);
+        this keeps the window background in step with it so there is no flash between the
+        splash and the first frame. values-night/themes.xml swaps the parent for dark mode.
+    -->
+    <style name="Theme.ArmChess" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+
+    <!--
+        Launch theme for MainActivity. installSplashScreen() swaps it for Theme.ArmChess.
+        The icon defaults to the launcher icon (design §4.2: "app icon on surface").
+    -->
+    <style name="Theme.ArmChess.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/window_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.ArmChess</item>
+    </style>
+</resources>
