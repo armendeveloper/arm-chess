@@ -1,5 +1,6 @@
 package chess.engine.board
 
+import chess.engine.perft.PerftPositions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -7,16 +8,8 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class MakeUnmakeTest {
-    /** The start position plus the seven perft positions in design §4.2 (chessprogramming.org "Perft Results"). */
-    private val perftFens = listOf(
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -",
-        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
-        "r2q1rk1/pP1p2pp/Q4n2/bbp1p3/Np6/1B3NBn/pPPP1PPP/R3K2R b KQ - 0 1",
-        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
-    )
+    /** The seven perft positions in design §4.2 (chessprogramming.org "Perft Results"). */
+    private val perftFens = PerftPositions.ALL
 
     private fun sq(name: String) = Square.parse(name)
 
@@ -157,18 +150,116 @@ class MakeUnmakeTest {
         assertFailsWith<IllegalStateException> { board.unmake(Move.of(Square.parse("e2"), Square.parse("e4"))) }
     }
 
+    /** Plays [uci] on [fen], checks the resulting FEN, then unmakes it and checks the board is back. */
+    private fun assertMakeUnmake(fen: String, uci: String, expectedFen: String) {
+        val board = Fen.parse(fen)
+        val before = board.copy()
+        val m = move(board, uci)
+        board.make(m)
+        assertEquals(expectedFen, Fen.format(board), "$fen after $uci")
+        board.unmake(m)
+        assertEquals(before, board, "$fen: unmake $uci")
+    }
+
     @Test
-    fun castlingEnPassantAndPromotionAreRejectedUntilT5() {
-        val castle = Fen.parse("4k3/8/8/8/8/8/8/4K2R w K - 0 1")
-        assertFailsWith<UnsupportedOperationException> { castle.make(Move.of(Square.E1, Square.G1, flags = Move.CASTLE)) }
-        assertEquals(Fen.parse("4k3/8/8/8/8/8/8/4K2R w K - 0 1"), castle, "a rejected move leaves the board alone")
+    fun castlingMovesTheRookAndUnmakeMovesItBack() {
+        val castling = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 3 1"
+        assertMakeUnmake(castling, "e1g1", "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 4 1")
+        assertMakeUnmake(castling, "e1c1", "r3k2r/8/8/8/8/8/8/2KR3R b kq - 4 1")
+        val black = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 3 9"
+        assertMakeUnmake(black, "e8g8", "r4rk1/8/8/8/8/8/8/R3K2R w KQ - 4 10")
+        assertMakeUnmake(black, "e8c8", "2kr3r/8/8/8/8/8/8/R3K2R w KQ - 4 10")
+    }
 
-        val ep = Fen.parse("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1")
-        assertFailsWith<UnsupportedOperationException> {
-            ep.make(Move.of(sq("e5"), sq("d6"), flags = Move.EN_PASSANT or Move.CAPTURE))
+    @Test
+    fun castlingUpdatesTheKingSquare() {
+        val board = Fen.parse("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+        val castle = move(board, "e1c1")
+        board.make(castle)
+        assertEquals(Square.C1, board.kingSquare(Piece.WHITE))
+        board.unmake(castle)
+        assertEquals(Square.E1, board.kingSquare(Piece.WHITE))
+    }
+
+    @Test
+    fun enPassantRemovesThePawnBehindTheTargetSquareAndUnmakePutsItBack() {
+        assertMakeUnmake("4k3/8/8/3pP3/8/8/8/4K3 w - d6 5 20", "e5d6", "4k3/8/3P4/8/8/8/8/4K3 b - - 0 20")
+        assertMakeUnmake("4k3/8/8/8/3pP3/8/8/4K3 b - e3 5 20", "d4e3", "4k3/8/8/8/8/4p3/8/4K3 w - - 0 21")
+    }
+
+    @Test
+    fun enPassantIsOnlyAvailableOnTheMoveRightAfterTheDoublePush() {
+        val board = Fen.parse("4k3/3p4/8/4P3/8/8/8/4K3 b - - 0 1")
+        play(board, "d7d5")
+        assertTrue("e5d6" in MoveGen.legalMoves(board).map { it.uci() })
+        play(board, "e1e2", "e8e7")
+        assertTrue("e5d6" !in MoveGen.legalMoves(board).map { it.uci() })
+    }
+
+    @Test
+    fun promotionReplacesThePawnAndUnmakeRestoresIt() {
+        val fen = "4k3/P7/8/8/8/8/8/4K3 w - - 9 40"
+        assertMakeUnmake(fen, "a7a8q", "Q3k3/8/8/8/8/8/8/4K3 b - - 0 40")
+        assertMakeUnmake(fen, "a7a8r", "R3k3/8/8/8/8/8/8/4K3 b - - 0 40")
+        assertMakeUnmake(fen, "a7a8b", "B3k3/8/8/8/8/8/8/4K3 b - - 0 40")
+        assertMakeUnmake(fen, "a7a8n", "N3k3/8/8/8/8/8/8/4K3 b - - 0 40")
+        assertMakeUnmake("4k3/8/8/8/8/8/7p/K7 b - - 0 40", "h2h1n", "4k3/8/8/8/8/8/8/K6n w - - 0 41")
+    }
+
+    @Test
+    fun capturePromotionReplacesBothPiecesAndUnmakeRestoresThem() {
+        assertMakeUnmake("nr2k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7b8q", "nQ2k3/8/8/8/8/8/8/4K3 b - - 0 1")
+        assertMakeUnmake("4k3/8/8/8/8/8/6p1/4K2R b K - 0 1", "g2h1r", "4k3/8/8/8/8/8/8/4K2r w - - 0 2")
+    }
+
+    @Test
+    fun aKingMoveClearsBothOfItsSidesCastlingRights() {
+        assertMakeUnmake("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1e2", "r3k2r/8/8/8/8/8/4K3/R6R b kq - 1 1")
+        assertMakeUnmake("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", "e8d8", "r2k3r/8/8/8/8/8/8/R3K2R w KQ - 1 2")
+    }
+
+    @Test
+    fun aRookMoveFromItsHomeSquareClearsThatWingsRight() {
+        val fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"
+        assertMakeUnmake(fen, "h1h4", "r3k2r/8/8/8/7R/8/8/R3K3 b Qkq - 1 1")
+        assertMakeUnmake(fen, "a1a4", "r3k2r/8/8/8/R7/8/8/4K2R b Kkq - 1 1")
+        assertMakeUnmake("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", "h8h5", "r3k3/8/8/7r/8/8/8/R3K2R w KQq - 1 2")
+    }
+
+    @Test
+    fun capturingARookOnItsHomeSquareClearsTheOpponentsRight() {
+        // The bishop takes on a8 along the long diagonal: only Black's queenside right goes.
+        assertMakeUnmake("r3k2r/8/8/8/8/8/6B1/R3K2R w KQkq - 0 1", "g2a8", "B3k2r/8/8/8/8/8/8/R3K2R b KQk - 0 1")
+        // Rook takes rook on h8: White loses kingside (rook left h1), Black loses kingside (rook taken).
+        assertMakeUnmake("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "h1h8", "r3k2R/8/8/8/8/8/8/R3K3 b Qq - 0 1")
+    }
+
+    @Test
+    fun aRookReturningHomeDoesNotRegainTheRight() {
+        val board = Fen.parse("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+        play(board, "h1h2", "a8a7", "h2h1", "a7a8")
+        assertEquals("r3k2r/8/8/8/8/8/8/R3K2R w Qk - 4 3", Fen.format(board))
+        assertEquals(setOf("e1c1"), MoveGen.legalMoves(board).filter { it.isCastle }.map { it.uci() }.toSet())
+    }
+
+    @Test
+    fun aRookMoveAwayFromTheHomeSquaresLeavesTheRightsAlone() {
+        assertMakeUnmake("r3k2r/8/8/8/8/8/R7/4K2R w Kkq - 0 1", "a2b2", "r3k2r/8/8/8/8/8/1R6/4K2R b Kkq - 1 1")    }
+
+    @Test
+    fun makeThenUnmakeRestoresTheBoardThroughSpecialMoves() {
+        // Positions where castling, en passant and promotions all occur within two plies.
+        val fens = listOf(
+            "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+            "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+            "4k3/8/8/2PpP3/8/8/8/4K3 w - d6 0 1",
+            "n1n4k/PPPP4/8/8/8/8/4pppp/K5N1 w - - 0 1",
+        )
+        for (fen in fens) {
+            val board = Fen.parse(fen)
+            val original = board.copy()
+            checkRoundTrips(board, depth = 3, fen = fen)
+            assertEquals(original, board, fen)
         }
-
-        val promo = Fen.parse("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")
-        assertFailsWith<UnsupportedOperationException> { promo.make(Move.of(sq("a7"), sq("a8"), promotion = Piece.QUEEN)) }
     }
 }

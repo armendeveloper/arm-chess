@@ -281,3 +281,83 @@ Red: `compileTestKotlin` failed with `Unresolved reference 'Attacks'` (and `Move
   - Start position depth 5 should then give 4,865,609.
 - `MAX_MOVES = 256` is sized for legal plus pseudo-legal moves. T-5 adds promotions; no realistic position comes near it, but the search (T-8) should keep using it rather than a smaller buffer.
 - T-6: reject a FEN where the side not to move is in check (`Attacks.isInCheck(board, 1 - board.sideToMove)`).
+
+## 2026-10-14 — T-5: Castling, en passant, promotion; the full perft gate
+
+**Stories:** US-4 (QA gate).
+
+### What changed and why
+- **`Board.make` / `unmake`** now play every move kind. The T-4 `UnsupportedOperationException` guard is gone.
+  - *Castling* (the king's move flagged `CASTLE`): the rook also jumps from its corner to the square the king crossed, and back on unmake (`moveCastlingRook`).
+  - *En passant*: the captured pawn is taken from one rank behind the target square, and unmake puts it back there (the target square is emptied). It is stored in the same undo slot as any captured piece.
+  - *Promotion*: the promoted piece goes on the target square; unmake puts a pawn of the mover's colour back on the from-square.
+  - *Castling rights*: a 64-entry `CASTLING_MASK` is ANDed for the from- and to-squares of every move. This clears both rights when the king leaves e1/e8, one right when a rook leaves a1/h1/a8/h8, and the opponent's right when a rook is captured on its home square. A rook that comes home does not regain the right. The undo stack already saved the rights, so unmake needs nothing new.
+- **`MoveGen`** generates every move kind.
+  - *Promotions*: a pawn on its seventh rank produces four moves (Q, R, B, N, queen first) for each push and each capture, the captures flagged `CAPTURE`. Last-rank moves without a promotion are never generated.
+  - *En passant*: a diagonal pawn step onto the empty en passant square, flagged `EN_PASSANT or CAPTURE`. The square always belongs to the side to move, so no colour check is needed. Pins, including the rank pin where both pawns leave the king's rank, are left to the existing make/test/unmake legality filter, which handles them with no special case.
+  - *Castling* (`addCastling`, after the king's steps): the right is set, the squares between king and rook are empty (b1/b8 included for queenside), the king is not in check, and the square it crosses (f1/d1/f8/d8) is not attacked. A set right means the king and rook are on their home squares, because FEN validation (T-3) and `make` keep it that way.
+- **Perft gate.** `PerftTest` runs the full gate column of design §4.2 for all 7 positions, one test per position. `PerftDeepTest` holds the release column and is tagged with the JUnit 4 category `chess.engine.PerftDeep`. In `engine/build.gradle.kts`, the default `test` task excludes that category, and a new `perftDeep` `Test` task (group `verification`) runs only it. That task is never up to date and never taken from the build cache, because it is both a release check and a timing record.
+- All `// T-5:` markers from T-4 are resolved and removed. The engine has no user-visible text, and none was added.
+
+### Files touched
+`engine/src/main/kotlin/chess/engine/board/{Board,MoveGen}.kt`, `engine/build.gradle.kts`, `engine/src/test/kotlin/chess/engine/PerftDeep.kt` (new, category marker), `engine/src/test/kotlin/chess/engine/perft/{PerftDeepTest,PerftPositions}.kt` (new), `engine/src/test/kotlin/chess/engine/perft/PerftTest.kt`, `engine/src/test/kotlin/chess/engine/board/{MoveGenTest,MakeUnmakeTest}.kt`, `docs/product/chess-vs-computer/04-plan.md` (Results row), this log.
+
+### Tests added (written first, seen failing)
+Red: with the tests written and the T-4 code unchanged, `./gradlew :engine:test` ran 127 tests and **32 failed** (every castling, en passant and promotion test, and the perft counts that need them). Position 6 and a few "not generated" checks already passed. Green after the implementation, with no test changes. The default `test` now has **127 tests** (T-4: 94; 36 added, 3 removed or replaced, net +33), plus 7 in `perftDeep`.
+- `PerftTest` (13): the gate column, one test per position: initial 0–5 (… 4,865,609), Kiwipete 1–4, position 3 1–5, position 4 1–4, position 4 mirrored 1–4, position 5 1–4 and position 6 1–4. Also: perft leaves all 7 boards unchanged; `divide` lists `e1g1`/`e1c1` in Kiwipete and the 6 root moves of position 4 and its mirror (sum 264). The T-4 tests for divide, depth 1, FEN overloads and invalid depths are kept. `initialPositionDepth0To4` and `position3Depth1To2` became the full-depth tests.
+- `PerftDeepTest` (7, `perftDeep` only): initial 6 = 119,060,324; Kiwipete 5 = 193,690,690; position 3 6 = 11,030,083; position 4 and mirrored 5 = 15,833,292; position 5 5 = 89,941,194; position 6 5 = 164,075,551.
+- `MoveGenTest` (+16):
+  - *Castling*: both sides and both wings, flagged `CASTLE`. One test for each blocked reason: no right; a piece on f1, g1, d1, c1 or b1 (own or enemy); king in check; transit square f1, d1 or f8 attacked; destination g1 or c1 attacked. Queenside is still allowed when only b1 is attacked, and castling is allowed when the rook is attacked.
+  - *En passant*: flags, no capture without a target square, two capturers, Black's captures. The rank pin is illegal in both position 3 lines: 1.Rb1 c5 bxc6 (pseudo-legal but filtered) and 1.e4 fxe3. Capturing the checking pawn is legal. A diagonally pinned pawn may capture en passant only along the pin.
+  - *Promotion*: four promotions for a white push and a black push, each a plain move (no flags). Four capture-promotions when the push square is blocked, each flagged `CAPTURE`. No pseudo-legal pawn move reaches the last rank without promoting.
+- `MakeUnmakeTest` (+12, −1): `castlingEnPassantAndPromotionAreRejectedUntilT5` is deleted because its behaviour is gone.
+  - Each new test plays the move, compares `Fen.format` with the expected FEN, then unmakes and compares the whole `Board`. This covers all four castlings (rook placement, rights, clocks), the king square after castling, en passant for both colours, all four promotions and a black under-promotion, and capture-promotions.
+  - Castling rights: a king move clears both; a rook move from a1, h1 or h8 clears one wing; capturing a rook on a8 or h8 clears the opponent's right; a rook coming home does not regain it; a rook moving off a non-home square leaves the rights alone.
+  - En passant is only available on the move right after the double push.
+  - Depth-3 make/unmake round trips run through four positions full of special moves.
+  - The existing depth-2 round trip over the 7 perft FENs now also exercises special moves. It reads them from the new shared `PerftPositions`.
+
+### Perft results and timing
+- Every count in the gate and deep columns of design §4.2 matches the Chessprogramming wiki. Start position depth 5 is now **4,865,609**; T-4 got 4,865,351, short by exactly the 258 en passant captures.
+- Gate timing: `./gradlew :engine:test --tests "chess.engine.perft.*" --rerun` took **0.94 s** for the `PerftTest` class in JUnit (about 17.0 M leaf nodes, cold JVM) and **8.6 s** wall clock including Gradle.
+- Per-position times in the full `:engine:test` run (warm JVM): initial 0–5 0.20 s, Kiwipete 0.16 s, position 3 0.04 s, position 4 0.02 s, mirrored 0.02 s, position 5 0.12 s, position 6 0.14 s. Class total 0.72 s.
+- `perftDeep` (about 609 M leaf nodes):
+
+  | Test | Run 1 | Run 2 |
+  |---|---|---|
+  | position 5, depth 5 | 17.4 s | 4.2 s |
+  | Kiwipete, depth 5 | 14.0 s | 7.7 s |
+  | position 6, depth 5 | 9.5 s | 6.4 s |
+  | initial, depth 6 | 6.1 s | 4.9 s |
+  | position 4 mirrored, depth 5 | 0.75 s | 0.65 s |
+  | position 3, depth 6 | 0.70 s | 0.64 s |
+  | position 4, depth 5 | 0.72 s | 0.65 s |
+  | **Total in JUnit** | **49.2 s** | **25.2 s** |
+  | Wall clock | 72 s | 27 s |
+
+  Run 1 shared the machine with a parallel build. Run 2 is about 24 M leaf nodes/s with bulk counting. The time is recorded in the plan's Results table.
+
+### Commands run
+- Baseline before changes: `./gradlew :engine:test` → BUILD SUCCESSFUL, 94 tests.
+- Red: `./gradlew :engine:test` → FAILED, 127 tests, 32 failed (`PerftDeepTest` correctly excluded).
+- `./gradlew :engine:test` → BUILD SUCCESSFUL, 127 tests, 0 failures.
+- `./gradlew :engine:test --tests "chess.engine.perft.*" --rerun` → BUILD SUCCESSFUL, 13 tests (timing above).
+- `./gradlew :engine:perftDeep` → BUILD SUCCESSFUL, 7 tests, 0 failures (run 1).
+- `./gradlew :engine:perftDeep --warning-mode all` → BUILD SUCCESSFUL, 7 tests (run 2). The new task adds no deprecation warnings.
+- GATE: `./gradlew --rerun-tasks :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL** in 57 s, 61 tasks executed.
+  - The first attempt failed at configuration with "The filename, directory name, or volume label syntax is incorrect". The cause was this worktree's new `local.properties`, written with unescaped backslashes. It was fixed to `sdk.dir=C\:\\Users\\...` and the gate was rerun; no code change was needed.
+  - `:engine:test`: 127 tests, 0 failures, 0 skipped.
+  - `:app:testDebugUnitTest`: 26 tests, 0 failures.
+  - Lint: 0 errors, 88 warnings. These are 86 `UnusedResources` (the copy deck added ahead of its screens, known since T-12), `OldTargetApi` and `MissingApplicationIcon`, all from `:app`, which T-5 does not touch.
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+
+### Deviations from the plan
+- **Castling destination check.** Pseudo-legal generation checks rights, empty squares, "not in check" and the crossed square. Whether the destination is attacked is left to the legality filter, as for every other king move. Legal move lists therefore match design §4.2 exactly, but `generatePseudoLegal` may include a castling move into check, just as it includes other king moves into check.
+- **En passant square.** It is still set after every double push (T-4 behaviour, standard FEN), not only when a capture is possible. Perft does not depend on this. The T-6 Zobrist key should hash the en passant file only when a capture is possible, so that transpositions match.
+- **Extra test files.** `PerftPositions.kt` (shared FENs) and `PerftDeepTest.kt` are not in the plan's file list. The category marker is in the test source set as `chess.engine.PerftDeep`, the name design §4.7 uses.
+- **No Zobrist round-trip check.** Design §4.2 mentions the Zobrist key in round-trip tests, but that key arrives in T-6.
+
+### Follow-ups
+- T-6: hash the en passant file only when a pawn of the side to move can capture. Extend the make/unmake round-trip tests to compare the Zobrist key.
+- T-6: reject a FEN where the side not to move is in check (carried over from T-4).
+- `perftDeep` takes about 25–50 s here. Run it before each release (T-27/T-28 checklists).
