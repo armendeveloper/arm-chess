@@ -1199,3 +1199,131 @@ Both runs chose the same moves and reached the same depths (deterministic). Run 
 - T-29: translate the 4 new strings and `about_version`. The `res/raw` licence texts stay in English.
 - T-27 / release checklist: "Open-source licences" is present in the release build and lists the libraries (design §4.9 QA note). Re-check the allow-list result whenever a dependency is added; MIT or BSD libraries also need their own copyright text bundled (`OpenSourceLicences.textFor` plus a `res/raw` file), which `OpenSourceLicencesTest` enforces.
 - Optional: register a `licenseeDebug` alias if scripts or docs must keep the plan's task name.
+
+## 2026-10-14 — T-9: Levels 1–4 (randomisation, root scoring), K+Q v K and variety checks
+
+**Stories:** US-6.
+
+### What changed and why
+- **`Levels`** (public object, new `Levels.kt`): `Levels.params(level)` for levels 1–4 (`IllegalArgumentException` otherwise), plus `Levels.MIN`, `Levels.MAX` and `Levels.ALL` (`1..4`). The table is ADR-3's, with one addition for level 3 (below):
+
+  | Level | Depth cap | Node budget | Time cap → deadline | Quiescence | Randomisation |
+  |---|---|---|---|---|---|
+  | 1 | 1 | 5,000 | 500 → 400 ms | `Off` | `RandomMoveOrNoise(randomMoveChance = 0.5, noiseCp = 40)` |
+  | 2 | 2 | 30,000 | 1,000 → 900 ms | `CapturesOnly(4)` | `PickFromTop(chance = 0.2, count = 5)` |
+  | 3 | 6 | 250,000 | 2,000 → 1,900 ms | `Full` | `WithinMargin(marginCp = 20, decidedCp = 400)` |
+  | 4 | 64 | 1,500,000 (provisional, T-11) | 4,000 → 3,900 ms | `Full` | `None` |
+
+  For a strength match (T-10), use `Levels.params(level).withoutDeadline()` and one seeded `Random` per game. T-11 changes level 4's budget in this table.
+- **`Randomisation`** (public sealed interface in `LevelParams.kt`): `None`, `RandomMoveOrNoise`, `PickFromTop` and `WithinMargin`, each with validated parameters. **`LevelParams.randomisation`** is a new last constructor parameter, defaulting to `None`, so existing callers and every T-8 search are unchanged.
+- **`SearchResult.choice: MoveChoice`** (new last field, default `Best`) and the public enum **`MoveChoice { Best, RandomMove, NoisyBest, FromTop, WithinMargin }`** say which rule picked the move (for T-19's debug log and T-10's reports). For a randomised pick, `scoreCp` is the chosen move's root score: exact for every move the level picks among, and an upper bound for a level-1 random move that the search found worse.
+- **`Engine.search`** now uses `random`. The `@Suppress("UNUSED_PARAMETER")` is gone, and the signature is unchanged. Everything random is drawn from that argument in a fixed order, so the same engine state, position, deadline-free parameters and seed give the same move.
+- **`RootChoice`** (internal, new `RootChoice.kt`) holds the randomisation, in three steps:
+  1. **Draw, before the search.** Level 1 decides random move vs noisy best here, and level 2 decides top 5 vs best. The root window is then widened only when the pick needs exact scores, so 80% of level 2's searches are identical to a plain search.
+  2. **Root window, per root move.** The root's beta is +∞, and its alpha is lowered so that every move the pick could choose scores above it (hence exactly):
+     - level 3: best so far − 20 − 1;
+     - level 1's noise: best so far − 2 × 40 − 1 (a move further below cannot win after ±40 noise);
+     - level 2's top 5: the 5th best so far − 1 (−∞ until 5 moves are scored).
+
+     With `None`, the window is exactly the old one (alpha = best so far).
+  3. **Pick, after the search**, among the root moves of the iteration whose move the search would play. That is the last completed iteration, or the searched prefix of a stopped iteration whose improvement the search keeps (T-8's rule). Copies are taken before the root moves are re-sorted. An only move and a cancelled search are never randomised, and they draw nothing from `random`.
+- **`Search.run`** takes `random` (now `run(game, params, random, nanoTime, shouldStop)`). The root loop tracks the iteration's best separately from the window's alpha.
+- **New Gradle task `:engine:levelChecks`** (JUnit category `chess.engine.LevelChecks`, excluded from `test`, like `perftDeep` and `searchBench`). It runs the K+Q v K and variety checks at the real level parameters in about 30 s.
+
+### Level 3 in decided games (a deviation from ADR-3's letter)
+The first version picked within 20 cp in every position. The fixed-seed K+Q v K test passed 10/10, but a throwaway probe (10 positions × 20 seeds, since deleted) showed **level 3 failing to mate a level-1 defender in 16 of 200 games**. 15 of those games were drawn by the 50-move rule. The 16th ended in insufficient material: once the 50-move draw was inside the horizon, every move scored 0, so giving up the queen was "within 20 cp". In K+Q v K, the moves that make progress score only a few centipawns (mop-up) above those that don't, so random picks among them wander. With a 10 cp margin, it still failed 3 of 200. Without randomisation, it mated 200 of 200 (worst case 17 moves).
+
+**Fix:** `WithinMargin.decidedCp = 400`. Once the best root score is at least 400 cp from 0 (every mate score included), level 3 plays the best move. On the final code, the same probe mates **200 of 200 (worst case 20 moves)**. Level 3's variety in undecided positions is unchanged: 2–5 distinct moves per variety position. ADR-3's level-3 cell and §4.7 in `03-tech-design.md` now record this; the PRD allows the developer to tune the levels as long as the acceptance criteria pass. `KqkMateTest` now plays level 3 with 3 seeds per position (30 games) so a lucky seed cannot hide this again. Before the fix, it failed.
+
+### Files touched
+- New: `engine/src/main/kotlin/chess/engine/search/{Levels,RootChoice}.kt`; `engine/src/test/kotlin/chess/engine/search/{LevelsTest,RootChoiceTest,KqkMateTest,VarietyTest}.kt`; `engine/src/test/kotlin/chess/engine/LevelChecks.kt` (category marker).
+- Changed: `engine/src/main/kotlin/chess/engine/search/{Engine,LevelParams,Search}.kt`; `engine/src/test/kotlin/chess/engine/search/SearchTest.kt` (4 `Search.run` calls pass `Random(0)`; nothing else changed); `engine/build.gradle.kts` (exclude `LevelChecks` from `test`; `levelChecks` task); `docs/product/chess-vs-computer/03-tech-design.md` (ADR-3 level 3, "as built" notes on exact root scores and §4.7); this log.
+
+### Tests added (written first, seen failing)
+Red: with the tests written and no `Levels`/`Randomisation`/`RootChoice`, `:engine:test` failed to compile (227 errors). On the first green run, 2 of the new tests failed because of my own test data:
+- Level 1's depth-1 search is shorter than one check interval, so `shouldStop` is never polled.
+- One random position had a single legal move, so the listener saw no root moves.
+
+Both were fixed in the tests. The decided-game rule then went red first as well: `RootChoiceTest.withinMarginPlaysTheBestMoveOnceTheGameIsDecided`, and level 3 failed `KqkMateTest` with 3 seeds. The default `:engine:test` now runs **314 tests** (282 before T-9: T-8's 249 plus T-7's notation tests; +32). The 5 `levelChecks` tests are extra.
+
+- **`RootChoiceTest`** (17, unit, made-up scores):
+  - **The draws.** `None` never consumes the random source. Level 1 plays random vs noise at 50/50 (10,000 draws, ±3%), and the 0 and 1 chances behave. Level 2 picks from the top 5 at 20% (±2%). Level 3 always uses the margin.
+  - **The root window for each rule**, including the top-5 window's ordering and its reset each iteration, and a huge margin clamping to a full window.
+  - **The picks.**
+    - A uniform random move: each of 10 moves 850–1,150 of 10,000.
+    - Noise: a move more than 80 cp below the best never wins; one 30 cp below wins about 19%, matching the exact 0.194.
+    - Top 5: each of the top 5 about 20%, never the 6th.
+    - Fewer than 5 moves: all of them.
+    - Margin: uniform among moves ≥ best − 20, never 21 below.
+    - Mates are never given up, and the longest defence is taken when mated.
+    - **Decided games (|best| ≥ 400) play the best move; 399 still randomises.**
+  - Parameter validation.
+- **`LevelsTest`** (15, real searches):
+  - **The ADR-3 table**, deadlines 400/900/1,900/3,900 ms. Out-of-range levels are rejected. Each level is strictly above the one below in depth, budget and cap. `withoutDeadline()` changes nothing else.
+  - **Exact root scores.** With quiescence off (so values cannot depend on the window), in 10 positions at depth 3: for the margin, noise and top-5 windows, every candidate's score equals its full-window score. Every other move's score bounds its exact score from above and stays below the cut-off. The pick and its reported score come from the candidates.
+  - **Seeded determinism.** Self-play at every level with the same seed gives identical `SearchResult`s; level 1 with another seed gives another game.
+  - **Level 4 never deviates.** Same result for every seed, `choice == Best`.
+  - **Level 1 over 1,000 decisions:**
+    - **499 uniform random moves** (asserted 400–600);
+    - **581 not the best move** (asserted 400–750; 97 of them from noise);
+    - a noisy pick is never more than 80 cp below the best;
+    - over 2,000 random picks at the start, all 20 moves appear, each 65–135 times.
+  - **Level 2:** **79 of 399 decisions picked from the top 5 (19.8%)** (asserted 14–26%). Every top-5 pick is in the top 5 of that search's own root scores.
+  - **Level 3:** every pick is within 20 cp of the best root score, and 9 of 50 decisions played a lower-scored move.
+  - **Legality.** Self-play at every level: 300 plies at levels 1–2 and 150 at levels 3–4 (budget 3,000), with every move legal.
+  - **No randomisation for an only move or a cancelled search.** An only move draws nothing. Cancellation is checked over 3 positions × 10 seeds per level.
+  - **Time caps with a fake clock tied to the node count** (`shouldStop` is polled once per 1,024 nodes, and the clock advances per node):
+    - On a slow-device clock, where the budget would take 10 × the cap, every level on 4 positions stops by its deadline plus one check interval, and a deadline stop happens at or after the deadline.
+    - On the plan's clock (1 ms per 1,000 nodes), every level's budget runs out before its deadline. Levels 1–3 are also run on it.
+    - On the slow clock, levels 3 and 4 are stopped by the deadline (not the budget), within one interval of it.
+- **`KqkMateTest`** (`levelChecks`; 3 tests): **level 3 mates a level-1 defender from all 10 positions with 3 seeds each (30/30, 4–13 moves)**, and **level 4 from all 10 (10/10, 5–9 moves)**, before the 50-move rule, deadline off. The positions are checked to be legal, ongoing, K+Q v K and at halfmove 0. 7 have White attacking and 3 Black.
+- **`VarietyTest`** (`levelChecks`; 2 tests): 5 opening/middlegame positions × 10 seeds at the real parameters. Distinct moves per position: **level 1 [4, 5, 5, 5, 9], level 2 [4, 4, 4, 4, 4], level 3 [5, 5, 2, 4, 4]** (each must have ≥ 2 somewhere); **level 4 [1, 1, 1, 1, 1]** over 2 seeds.
+
+**Mutation checks** (each applied with `sed`, run against `:engine:test --tests "chess.engine.search.*"`, then restored from a copy in `build/t9-scratch/`; `cmp` confirmed each restore). Every one fails at least one test:
+- Margin window not lowered: 3 tests fail.
+- Noise window lowered by 1 × noise: 2.
+- Top-5 window not lowered: 3.
+- Level 1 never random: 5.
+- One-sided noise: 1.
+- Top pick from all moves: 3.
+- A random move that never picks the last move: 2.
+- Cancelled searches randomised: 1.
+- Picking from the re-sorted root scores: 4.
+
+The decided-game guard was seen red before it was implemented. One mutation showed that the cancellation test depended on level 2's draw for `Random(1)`, so it was rewritten over several seeds and positions.
+
+### Commands run
+- Setup: `local.properties` written with the Write tool and checked with `od -c` (double backslashes). `git merge-base --is-ancestor c433797 HEAD` passed, and branch `t-9-levels` was created from it.
+- Baseline: `./gradlew :engine:test` → BUILD SUCCESSFUL (282 tests, from cache).
+- Red: `./gradlew :engine:test` → compilation FAILED, 227 errors.
+- `./gradlew :engine:test` → 313 tests, 2 failed (test data, above). After the fixes: BUILD SUCCESSFUL. The first green run took 45 s for `LevelsTest` on a machine loaded by other agents' builds (256 k nodes/s); with the tests trimmed and the load gone it takes 2.4–2.9 s.
+- `./gradlew :engine:levelChecks` → BUILD SUCCESSFUL. Then the probe (`--tests "*ScratchKqkSeedsProbe*"`, file deleted afterwards) gave the numbers in the level-3 section. After the fix, `./gradlew :engine:test --tests "*RootChoiceTest*" :engine:levelChecks --tests "*KqkMateTest*" --continue` FAILED as expected before the guard, and passed after it.
+- **GATE** (final tree): `./gradlew --rerun-tasks :engine:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` → **BUILD SUCCESSFUL** in 2 min 40 s, 63 tasks executed.
+  - `:engine:test`: **314 tests, 0 failures, 0 skipped**.
+  - `:app:testDebugUnitTest`: **191 tests, 0 failures**.
+  - Lint: **0 errors**, 68 warnings, all in `:app`, which T-9 does not touch.
+  - `app-debug.apk` built. No Kotlin compiler warnings.
+- Standalone: `./gradlew :engine:test --rerun` → BUILD SUCCESSFUL (LevelsTest 2.9 s, RootChoiceTest 0.06 s). `./gradlew :engine:levelChecks` → BUILD SUCCESSFUL in 33 s:
+  - K+Q v K: level 3 4.7 s, level 4 10.6 s;
+  - variety: levels 1–3 6.8 s, level 4 7.8 s.
+
+### Deviations from the plan
+- **Level 3 plays the best move in decided games** (|best| ≥ 400 cp), above. ADR-3 is updated.
+- **K+Q v K and variety run in `:engine:levelChecks`, not in the default `test`** (design §4.7 put them in `test`). At the real parameters they take about 30 s, and the caller asked for suites longer than a few seconds to go behind a separate task. The GATE does not run them, so T-27's CI should (follow-up).
+- **The exact-score window is applied at every iteration**, not only "at the final depth", because the final depth isn't known in advance under a node budget. The pick uses the iteration whose move the search would play.
+- **Legality uses 300/150 self-play plies with reduced budgets for levels 3 and 4**, not 1,000 per level at full strength. Only the randomisation decides what a level returns beyond the search, and T-8 already covers the search's legality over 500 positions.
+- **The plan's 1 ms per 1,000 nodes clock never reaches any level's deadline** (each budget runs out first). So the deadline is tested on a slow-device clock where it binds, and the plan's clock runs for levels 1–3. Level 4's 1.5 M nodes take a second of real time and prove nothing extra there.
+- **Additions:**
+  - `MoveChoice` and `SearchResult.choice` (default `Best`);
+  - `Levels.MIN`, `MAX` and `ALL`;
+  - `RootChoiceTest.kt`, `LevelChecks.kt` and the `levelChecks` task;
+  - `Search.run` takes `random`.
+
+  The plan's file list named only `Levels`, `LevelParams` and `Search`; the root-choice logic got its own file to keep `Search.kt` readable.
+
+### Follow-ups
+- **T-27 CI:** run `:engine:levelChecks` (about 30 s) on every push or nightly, since the GATE does not include it.
+- **T-10:** use `Levels.params(n).withoutDeadline()` and `Random(seed)` per game. `SearchResult.choice` can feed the match report. If the ordering check needs tuning, `decidedCp` and the margins are `LevelParams` values.
+- **T-11:** set level 4's node budget in `Levels.kt` (and the test table in `LevelsTest.paramsMatchTheAdr3Table`).
+- **T-19:** debug-log `SearchResult.choice` with each result. Call `Engine.newGame()` on new game and after undo (unchanged from T-8).
+- Level 1 can still throw away a mate (by design: half its moves are random). Level 2 can too, one time in five (a top-5 pick). Only level 3 has the decided-game guard; revisit if testers find level 2 erratic in won endings.
